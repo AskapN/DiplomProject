@@ -1,3 +1,334 @@
+from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.core.validators import MinValueValidator, RegexValidator
+
 
 # Create your models here.
+class CustomUser(AbstractUser):
+    """Расширенная модель пользователя с дополнительными полями.
+
+    Наследуется от AbstractUser и добавляет:
+    - phone: Телефон пользователя с валидацией формата
+    - avatar: Аватар пользователя (изображение)
+    - created_at: Дата создания аккаунта
+    - updated_at: Дата последнего обновления
+
+    Связи:
+    - OneToOne: shop (связь с магазином пользователя)
+    - ForeignKey: orders (заказы пользователя)
+    - ForeignKey: contacts (контактные данные пользователя)
+    """
+    phone = models.CharField(
+        max_length=20,
+        verbose_name='Телефон',
+        blank=True,
+        validators=[
+            RegexValidator(
+                regex=r'^\+?1?\d{9,15}$',
+                message='Введите корректный номер телефона'
+            )
+        ]
+    )
+    avatar = models.ImageField(upload_to='avatars/', verbose_name='Аватар', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создано')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Обновлено')
+
+    class Meta:
+        verbose_name = 'Пользователь'
+        verbose_name_plural = 'Список пользователей'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.get_full_name() or self.username}'
+
+
+class Shop(models.Model):
+    """Модель магазина.
+
+    Представляет торговую точку в системе. Каждый магазин принадлежит одному пользователю.
+
+    Поля:
+    - name: Название магазина (максимум 40 символов)
+    - url: Ссылка на сайт магазина (опционально)
+    - user: Владелец магазина (OneToOne связь с CustomUser)
+
+    Связи:
+    - ManyToMany: categories (категории товаров в магазине)
+    - ForeignKey: product_infos (информация о товарах в этом магазине)
+    - ForeignKey: order_items (позиции заказов из этого магазина)
+    """
+    name = models.CharField(max_length=40, verbose_name='Название')
+    url = models.URLField(verbose_name='ссылка', null=True, blank=True)
+    user = models.OneToOneField(CustomUser, verbose_name='Пользователь', on_delete=models.CASCADE, related_name='shop')
+
+    class Meta:
+        verbose_name = 'Магазин'
+        verbose_name_plural = 'Список магазинов'
+        ordering = ['-name']
+
+    def __str__(self):
+        return self.name
+
+
+class Category(models.Model):
+    """Модель категории товаров.
+
+    Представляет категорию или группу товаров. Категории могут быть связаны с несколькими магазинами.
+
+    Поля:
+    - name: Название категории (максимум 40 символов)
+    - shops: Магазины, в которых продаются товары этой категории (ManyToMany)
+
+    Связи:
+    - ForeignKey: products (товары в этой категории)
+    """
+    name = models.CharField(max_length=40, verbose_name='Название')
+    shops = models.ManyToManyField(Shop, verbose_name='магазины', related_name='categories')
+
+    class Meta:
+        verbose_name = 'Категория'
+        verbose_name_plural = 'Список категорий'
+        ordering = ['-name']
+
+    def __str__(self):
+        return self.name
+
+
+
+class Product(models.Model):
+    """Модель товара.
+
+    Представляет базовую информацию о товаре. Один товар может иметь разные характеристики
+    в разных магазинах (цена, количество и т.д.).
+
+    Поля:
+    - category: Категория товара (ForeignKey на Category)
+    - name: Название товара (максимум 40 символов)
+
+    Связи:
+    - ForeignKey: product_infos (информация о товаре в разных магазинах)
+    """
+    category = models.ForeignKey(Category, verbose_name='категория', on_delete=models.CASCADE, related_name='products')
+    name = models.CharField(max_length=40, verbose_name='Название')
+
+    class Meta:
+        verbose_name = 'Продукт'
+        verbose_name_plural = 'Список продуктов'
+        ordering = ['-name']
+
+    def __str__(self):
+        return self.name
+
+
+class ProductInfo(models.Model):
+    """Модель информации о товаре в конкретном магазине.
+
+    Содержит специфическую информацию о товаре в конкретном магазине:
+    цена, количество, название (может отличаться от базового).
+
+    Поля:
+    - product: Ссылка на базовый товар (ForeignKey на Product)
+    - shop: Магазин, в котором продается товар (ForeignKey на Shop)
+    - name: Название товара в этом магазине (максимум 40 символов)
+    - quantity: Количество товара на складе (положительное целое)
+    - price: Цена продажи (DecimalField с 2 знаками после запятой)
+    - price_rrc: Рекомендуемая розничная цена (DecimalField с 2 знаками после запятой)
+
+    Связи:
+    - ForeignKey: product_parameters (параметры этого товара)
+    - ForeignKey: order_items (позиции заказов этого товара)
+
+    Ограничения:
+    - unique_together: ('product', 'shop') - один товар в одном магазине только один раз
+    """
+    product = models.ForeignKey(Product, verbose_name='продукт', on_delete=models.CASCADE, related_name='product_infos')
+    shop = models.ForeignKey(Shop, verbose_name='магазин', on_delete=models.CASCADE, related_name='product_infos')
+    name = models.CharField(max_length=40, verbose_name='Название')
+    quantity = models.PositiveIntegerField(verbose_name='Количество')
+    price = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Цена', validators=[MinValueValidator(0)])
+    price_rrc = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Цена РРЦ', validators=[MinValueValidator(0)])
+
+    class Meta:
+        verbose_name = 'Информация о продукте'
+        verbose_name_plural = 'Список информации о продуктах'
+        unique_together = ['product', 'shop']
+
+
+class Parameter(models.Model):
+    """Модель параметра товара.
+
+    Представляет наименование параметра товара (например: "Цвет", "Размер", "Вес", "Материал").
+
+    Поля:
+    - name: Название параметра (максимум 40 символов)
+
+    Связи:
+    - ForeignKey: product_parameters (значения этого параметра для разных товаров)
+    """
+    name = models.CharField(max_length=40, verbose_name='Название')
+
+    class Meta:
+        verbose_name = 'Наименование параметра'
+        verbose_name_plural = 'Список параметров'
+        ordering = ['-name']
+
+    def __str__(self):
+        return self.name
+
+
+class ProductParameter(models.Model):
+    """Модель значения параметра товара.
+
+    Связывает конкретный товар в магазине с параметром и его значением.
+    Например: товар "Футболка" имеет параметр "Цвет" со значением "Красный".
+
+    Поля:
+    - product_info: Ссылка на товар в магазине (ForeignKey на ProductInfo)
+    - parameter: Ссылка на параметр (ForeignKey на Parameter)
+    - value: Значение параметра (максимум 40 символов)
+
+    Связи:
+    - Нет прямых связей (промежуточная модель)
+
+    Ограничения:
+    - unique_together: ('product_info', 'parameter') - один параметр для товара только один раз
+    """
+    product_info = models.ForeignKey(ProductInfo, verbose_name='продукт', on_delete=models.CASCADE, related_name='product_parameters')
+    parameter = models.ForeignKey(Parameter, verbose_name='параметр', on_delete=models.CASCADE, related_name='product_parameters')
+    value = models.CharField(max_length=40, verbose_name='Значение')
+
+    class Meta:
+        verbose_name = 'Параметр продукта'
+        verbose_name_plural = 'Список параметров продукта'
+        unique_together = ['product_info', 'parameter']
+
+
+class Order(models.Model):
+    """Модель заказа.
+
+    Представляет заказ пользователя, содержащий одну или несколько позиций товаров.
+
+    Поля:
+    - user: Пользователь, сделавший заказ (ForeignKey на CustomUser)
+    - date: Дата и время создания заказа (автоматически при создании)
+    - status: Статус заказа (выбор из StatusChoices)
+
+    Статусы заказа:
+    - NEW: Новый заказ
+    - CONFIRMED: Заказ подтвержден
+    - SHIPPED: Заказ отправлен
+    - DELIVERED: Заказ доставлен
+    - CANCELLED: Заказ отменен
+
+    Связи:
+    - ForeignKey: order_items (позиции в этом заказе)
+
+    Методы:
+    - get_total_price(): Возвращает общую сумму заказа
+    """
+    class StatusChoices(models.TextChoices):
+        NEW = 'new', 'Новый'
+        CONFIRMED = 'confirmed', 'Подтвержден'
+        SHIPPED = 'shipped', 'Отправлен'
+        DELIVERED = 'delivered', 'Доставлен'
+        CANCELLED = 'cancelled', 'Отменен'
+
+    user = models.ForeignKey(CustomUser, verbose_name='Пользователь', on_delete=models.CASCADE, related_name='orders')
+    date = models.DateTimeField(auto_now_add=True, verbose_name='Дата')
+    status = models.CharField(
+        max_length=20,
+        verbose_name='Статус',
+        choices=StatusChoices,
+        default='new'
+    )
+
+    class Meta:
+        verbose_name = 'Заказ'
+        verbose_name_plural = 'Список заказов'
+        ordering = ['-date']
+
+    def __str__(self):
+        return f'Заказ от {self.date} для {self.user.username}'
+
+    def get_total_price(self):
+        """Возвращает общую сумму заказа"""
+        from decimal import Decimal
+        total = Decimal('0.00')
+        for item in self.order_items.all():
+            total += item.product.price * item.quantity
+        return total
+
+
+class OrderItem(models.Model):
+    """Модель позиции заказа.
+
+    Представляет одну позицию в заказе - конкретный товар в определенном количестве.
+
+    Поля:
+    - order: Ссылка на заказ (ForeignKey на Order)
+    - product: Ссылка на товар в магазине (ForeignKey на ProductInfo)
+    - shop: Ссылка на магазин (ForeignKey на Shop)
+    - quantity: Количество товара в позиции (положительное целое, минимум 1)
+
+    Связи:
+    - Нет прямых связей (промежуточная модель между Order и ProductInfo)
+
+    Методы:
+    - get_price(): Возвращает стоимость позиции (цена товара × количество)
+    """
+    order = models.ForeignKey(Order, verbose_name='Заказ', on_delete=models.CASCADE, related_name='order_items')
+    product = models.ForeignKey(ProductInfo, verbose_name='продукт', on_delete=models.CASCADE, related_name='order_items')
+    shop = models.ForeignKey(Shop, verbose_name='магазин', on_delete=models.CASCADE, related_name='order_items')
+    quantity = models.PositiveIntegerField(verbose_name='Количество', validators=[MinValueValidator(1)])
+
+    class Meta:
+        verbose_name = 'Позиция в заказе'
+        verbose_name_plural = 'Список позиций в заказе'
+
+    def get_price(self):
+        """Возвращает стоимость позиции (цена × количество)"""
+        return self.product.price * self.quantity
+
+
+class Contact(models.Model):
+    """Модель контактных данных пользователя.
+
+    Содержит адрес доставки и контактный телефон пользователя.
+
+    Поля:
+    - user: Ссылка на пользователя (ForeignKey на CustomUser)
+    - city: Город доставки (максимум 40 символов)
+    - street: Улица доставки (максимум 40 символов)
+    - house: Номер дома (максимум 40 символов)
+    - apartment: Номер квартиры (максимум 40 символов, опционально)
+    - phone: Контактный телефон с валидацией формата (максимум 20 символов)
+
+    Связи:
+    - Нет прямых связей (связана только с пользователем)
+
+    Примечание:
+    - Телефон валидируется регулярным выражением для международного формата
+    - Квартира является опциональным полем (может быть пустой)
+    """
+    user = models.ForeignKey(CustomUser, verbose_name='Пользователь', on_delete=models.CASCADE, related_name='contacts')
+    city = models.CharField(max_length=40, verbose_name='Город')
+    street = models.CharField(max_length=40, verbose_name='Улица')
+    house = models.CharField(max_length=40, verbose_name='Дом')
+    apartment = models.CharField(max_length=40, verbose_name='Квартира', blank=True)
+    phone = models.CharField(
+        max_length=20,
+        verbose_name='Телефон',
+        validators=[
+            RegexValidator(
+                regex=r'^\+?1?\d{9,15}$',
+                message='Введите корректный номер телефона'
+            )
+        ]
+    )
+
+    class Meta:
+        verbose_name = 'Контакты пользователя'
+        verbose_name_plural = 'Список контактов пользователя'
+
+    def __str__(self):
+        return f'г.{self.city}, ул.{self.street}, д.{self.house}, кв.{self.apartment}, тел.:{self.phone}'
