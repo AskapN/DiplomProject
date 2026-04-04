@@ -51,6 +51,23 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',  # JWT аутентификация
+        'rest_framework.authentication.SessionAuthentication',         # Сессионная аутентификация для браузера
+    ),
+    'DEFAULT_PERMISSION_CLASSES': (
+        'rest_framework.permissions.IsAuthenticated',  # Разрешения по умолчанию
+    ),
+    'DEFAULT_FILTER_BACKENDS': (
+        'django_filters.rest_framework.DjangoFilterBackend',  # Фильтрация
+        'rest_framework.filters.SearchFilter',                # Поиск
+        'rest_framework.filters.OrderingFilter',              # Сортировка
+    ),
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',  # Пагинация
+    'PAGE_SIZE': 10,  # Размер страницы
+}
+
 ROOT_URLCONF = 'orders.urls'
 
 TEMPLATES = [

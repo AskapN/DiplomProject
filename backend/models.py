@@ -3,7 +3,34 @@ from django.db import models
 from django.core.validators import MinValueValidator, RegexValidator
 
 
-# Create your models here.
+class UserRole(models.Model):
+    """Модель роли пользователя.
+
+    Определяет уровень доступа пользователя в системе.
+    """
+
+    class RoleChoices(models.TextChoices):
+        ADMIN = 'admin', 'Администратор'
+        SHOP = 'shop', 'Магазин'
+        SHOP_EMPLOYEE = 'shop_employee', 'Сотрудник магазина'
+        BUYER = 'buyer', 'Покупатель'
+
+    name = models.CharField(
+        max_length=20,
+        choices=RoleChoices.choices,
+        unique=True,
+        verbose_name='Роль'
+    )
+    description = models.TextField(verbose_name='Описание', blank=True)
+
+    class Meta:
+        verbose_name = 'Роль пользователя'
+        verbose_name_plural = 'Роли пользователей'
+
+    def __str__(self):
+        return self.get_name_display()
+
+
 class CustomUser(AbstractUser):
     """Расширенная модель пользователя с дополнительными полями.
 
@@ -32,6 +59,13 @@ class CustomUser(AbstractUser):
     avatar = models.ImageField(upload_to='avatars/', verbose_name='Аватар', null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создано')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Обновлено')
+    role = models.ForeignKey(
+        UserRole,
+        on_delete=models.SET_NULL,
+        null=True,
+        verbose_name='Роль',
+        related_name='users'
+    )
 
     class Meta:
         verbose_name = 'Пользователь'
@@ -40,6 +74,48 @@ class CustomUser(AbstractUser):
 
     def __str__(self):
         return f'{self.get_full_name() or self.username}'
+
+    def has_role(self, role_name):
+        """Проверяет, имеет ли пользователь указанную роль."""
+        return (
+                self.is_authenticated and
+                self.role and
+                self.role.name == role_name
+        )
+
+    def is_admin(self):
+        """Проверяет, является ли пользователь администратором."""
+        return self.has_role('admin')
+
+    def is_shop(self):
+        """Проверяет, является ли пользователь владельцем магазина."""
+        return self.has_role('shop')
+
+    def is_shop_employee(self):
+        """Проверяет, является ли пользователь сотрудником магазина."""
+        return self.has_role('shop_employee')
+
+    def is_buyer(self):
+        """Проверяет, является ли пользователь покупателем."""
+        return self.has_role('buyer')
+
+    def can_manage_shop(self, shop):
+        """Проверяет, может ли пользователь управлять магазином."""
+        if not self.is_authenticated:
+            return False
+
+        # Владелец магазина
+        if hasattr(shop, 'user') and shop.user == self:
+            return True
+
+        # Сотрудник магазина
+        if hasattr(shop, 'employees'):
+            return shop.employees.filter(
+                user=self,
+                is_active=True
+            ).exists()
+
+        return False
 
 
 class Shop(models.Model):
@@ -68,6 +144,35 @@ class Shop(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class ShopEmployee(models.Model):
+    """Модель сотрудника магазина.
+
+    Связывает пользователя-сотрудника с конкретным магазином.
+    """
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        verbose_name='Сотрудник',
+        related_name='shop_employments'
+    )
+    shop = models.ForeignKey(
+        Shop,
+        on_delete=models.CASCADE,
+        verbose_name='Магазин',
+        related_name='employees'
+    )
+    position = models.CharField(max_length=100, verbose_name='Должность')
+    is_active = models.BooleanField(default=True, verbose_name='Активен')
+
+    class Meta:
+        verbose_name = 'Сотрудник магазина'
+        verbose_name_plural = 'Сотрудники магазинов'
+        unique_together = ['user', 'shop']
+
+    def __str__(self):
+        return f'{self.user} - {self.shop} ({self.position})'
 
 
 class Category(models.Model):

@@ -2,8 +2,10 @@ from django.http import JsonResponse
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError
 from requests import get
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from backend.permission import IsShopOrShopEmployee
 from backend.utils import load_products_from_data, parse_file_content
 
 
@@ -12,6 +14,8 @@ class PartnerUpdate(APIView):
     API класс для обновления прайса от поставщика.
     Поддерживает загрузку товаров из URL и загруженных файлов.
     """
+
+    permission_classes = [IsAuthenticated, IsShopOrShopEmployee]
 
     def post(self, request, *args, **kwargs):
         """
@@ -23,12 +27,6 @@ class PartnerUpdate(APIView):
 
         Поддерживаемые форматы: YAML, JSON
         """
-        if not request.user.is_authenticated:
-            return JsonResponse(
-                {'Status': False, 'Error': 'Log in required'},
-                status=403
-            )
-
         # Получение URL или файла
         url = request.data.get('url')
         file = request.FILES.get('file')
@@ -100,3 +98,4 @@ class PartnerUpdate(APIView):
                 'Status': False,
                 'Error': result.get('error', 'Неизвестная ошибка')
             })
+
