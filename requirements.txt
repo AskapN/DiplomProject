@@ -1,4 +1,6 @@
 Django==4.2.11
 Pillow==10.2.0
 python-decouple==3.8
-
+PyYAML==6.0.1
+requests==2.31.0
+djangorestframework==3.14.0

@@ -129,6 +129,8 @@ class ProductInfo(models.Model):
     Поля:
     - product: Ссылка на базовый товар (ForeignKey на Product)
     - shop: Магазин, в котором продается товар (ForeignKey на Shop)
+    - external_id: Внешний ID товара из файла поставщика
+    - model: Модель товара
     - name: Название товара в этом магазине (максимум 40 символов)
     - quantity: Количество товара на складе (положительное целое)
     - price: Цена продажи (DecimalField с 2 знаками после запятой)
@@ -143,6 +145,8 @@ class ProductInfo(models.Model):
     """
     product = models.ForeignKey(Product, verbose_name='продукт', on_delete=models.CASCADE, related_name='product_infos')
     shop = models.ForeignKey(Shop, verbose_name='магазин', on_delete=models.CASCADE, related_name='product_infos')
+    external_id = models.PositiveIntegerField(verbose_name='Внешний ID', blank=True, null=True)
+    model = models.CharField(max_length=80, verbose_name='Модель', blank=True)
     name = models.CharField(max_length=40, verbose_name='Название')
     quantity = models.PositiveIntegerField(verbose_name='Количество')
     price = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Цена', validators=[MinValueValidator(0)])
@@ -238,8 +242,8 @@ class Order(models.Model):
     status = models.CharField(
         max_length=20,
         verbose_name='Статус',
-        choices=StatusChoices,
-        default='new'
+        choices=StatusChoices.choices,
+        default=StatusChoices.NEW
     )
 
     class Meta:
