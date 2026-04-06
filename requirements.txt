@@ -4,3 +4,4 @@ python-decouple
 PyYAML
 requests
 djangorestframework
+djangorestframework-simplejwt

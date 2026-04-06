@@ -1,3 +1,8 @@
+from django.core.mail import send_mail
+from django.conf import settings
+from django.urls import reverse
+from django.contrib.sites.shortcuts import get_current_site
+
 import json
 from decimal import Decimal
 import yaml
@@ -165,3 +170,37 @@ def parse_file_content(file_content, file_format='yaml'):
 
     except Exception as e:
         raise ValueError(f"Ошибка при парсинге файла: {str(e)}")
+
+
+def send_verification_email(user, request):
+    """Отправляет письмо с подтверждением email"""
+    token = user.generate_email_verification_token()
+
+    # Формируем URL для подтверждения
+    current_site = get_current_site(request)
+    verify_url = f"http://{current_site.domain}/api/verify-email/?token={token}&email={user.email}"
+
+    subject = 'Подтверждение email'
+    message = f'''
+    Здравствуйте, {user.first_name}!
+
+    Пожалуйста, подтвердите ваш email, перейдя по ссылке:
+    {verify_url}
+
+    Эта ссылка действительна в течение 24 часов.
+
+    Если вы не регистрировались на нашем сайте, просто проигнорируйте это письмо.
+    '''
+
+    try:
+        send_mail(
+            subject,
+            message,
+            settings.DEFAULT_FROM_EMAIL,
+            [user.email],
+            fail_silently=False,
+        )
+        return True
+    except Exception as e:
+        print(f"Ошибка отправки email: {e}")
+        return False

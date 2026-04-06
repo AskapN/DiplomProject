@@ -2,6 +2,8 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.core.validators import MinValueValidator, RegexValidator
 
+import secrets
+
 
 class UserRole(models.Model):
     """Модель роли пользователя.
@@ -66,6 +68,9 @@ class CustomUser(AbstractUser):
         verbose_name='Роль',
         related_name='users'
     )
+    email_verified = models.BooleanField(default=False, verbose_name='Email подтвержден')
+    email_verification_token = models.CharField(max_length=255, blank=True, null=True,
+                                                verbose_name='Токен верификации email')
 
     class Meta:
         verbose_name = 'Пользователь'
@@ -115,6 +120,21 @@ class CustomUser(AbstractUser):
                 is_active=True
             ).exists()
 
+        return False
+
+    def generate_email_verification_token(self):
+        """Генерирует токен для верификации email"""
+        self.email_verification_token = secrets.token_urlsafe(32)
+        self.save()
+        return self.email_verification_token
+
+    def verify_email(self, token):
+        """Подтверждает email по токену"""
+        if self.email_verification_token == token:
+            self.email_verified = True
+            self.email_verification_token = None
+            self.save()
+            return True
         return False
 
 
