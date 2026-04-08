@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.core.exceptions import ValidationError
 
-from .models import CustomUser, UserRole
+from .models import CustomUser, UserRole, Product, ProductInfo, ProductParameter, Parameter, Shop, Category
 
 
 class LoginSerializer(serializers.Serializer):
@@ -77,3 +77,50 @@ class RegisterSerializer(serializers.ModelSerializer):
             role=buyer_role
         )
         return user
+
+
+class ParameterSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Parameter
+        fields = ['name']
+
+
+class ProductParameterSerializer(serializers.ModelSerializer):
+    parameter = ParameterSerializer(read_only=True)
+
+    class Meta:
+        model = ProductParameter
+        fields = ['parameter', 'value']
+
+
+class ShopSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Shop
+        fields = ['id', 'name', 'url']
+
+
+class CategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Category
+        fields = ['id', 'name']
+
+
+class ProductInfoSerializer(serializers.ModelSerializer):
+    shop = ShopSerializer(read_only=True)
+    parameters = ProductParameterSerializer(source='product_parameters', many=True, read_only=True)
+
+    class Meta:
+        model = ProductInfo
+        fields = [
+            'id', 'shop', 'external_id', 'model', 'name',
+            'quantity', 'price', 'price_rrc', 'parameters'
+        ]
+
+
+class ProductSerializer(serializers.ModelSerializer):
+    category = CategorySerializer(read_only=True)
+    product_infos = ProductInfoSerializer(source='product_infos', many=True, read_only=True)
+
+    class Meta:
+        model = Product
+        fields = ['id', 'category', 'name', 'product_infos']

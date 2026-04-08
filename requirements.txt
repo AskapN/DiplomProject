@@ -5,3 +5,5 @@ PyYAML
 requests
 djangorestframework
 djangorestframework-simplejwt
+django-filter
+python-dotenv

@@ -384,7 +384,7 @@ class Order(models.Model):
         from decimal import Decimal
         total = Decimal('0.00')
         for item in self.order_items.all():
-            total += item.product.price * item.quantity
+            total += item.product_info.price * item.quantity
         return total
 
 

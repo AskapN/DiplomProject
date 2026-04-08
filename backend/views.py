@@ -1,21 +1,25 @@
 from django.http import JsonResponse
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError
+from django.db import models
 
 from requests import get
 
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
-from rest_framework import status
+from rest_framework import status, generics
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from backend.models import CustomUser
-from backend.serializers import LoginSerializer, RegisterSerializer
+from django_filters import rest_framework as filters
+
+from backend.models import CustomUser, ProductInfo
+from backend.serializers import LoginSerializer, RegisterSerializer, ProductInfoSerializer
 
 from backend.permission import IsShopOrShopEmployee
-from backend.utils import load_products_from_data, parse_file_content
+from backend.utils import load_products_from_data, parse_file_content, send_verification_email
 
+from backend.filters import ProductInfoFilter
 
 class PartnerUpdate(APIView):
     """
@@ -153,41 +157,44 @@ class RegisterView(APIView):
     """
     permission_classes = []
 
-
-class RegisterView(APIView):
-    permission_classes = []
-
     def post(self, request, *args, **kwargs):
-        serializer = RegisterSerializer(data=request.data)
+        try:
+            serializer = RegisterSerializer(data=request.data)
 
-        if serializer.is_valid():
-            user = serializer.save()
+            if serializer.is_valid():
+                user = serializer.save()
 
-            # Отправляем письмо подтверждения
-            from backend.utils import send_verification_email
-            email_sent = send_verification_email(user, request)
+                # Отправляем письмо подтверждения
+                email_sent = send_verification_email(user, request)
+
+                return Response({
+                    'status': 'success',
+                    'message': 'Пользователь успешно зарегистрирован. Проверьте вашу почту для подтверждения email.',
+                    'user': {
+                        'id': user.id,
+                        'email': user.email,
+                        'username': user.username,
+                        'first_name': user.first_name,
+                        'last_name': user.last_name,
+                        'phone': user.phone,
+                        'avatar': user.avatar.url if user.avatar else None,
+                        'role': user.role.name if user.role else None,
+                        'email_verified': user.email_verified,
+                    },
+                    'email_sent': email_sent
+                }, status=status.HTTP_201_CREATED)
 
             return Response({
-                'status': 'success',
-                'message': 'Пользователь успешно зарегистрирован. Проверьте вашу почту для подтверждения email.',
-                'user': {
-                    'id': user.id,
-                    'email': user.email,
-                    'username': user.username,
-                    'first_name': user.first_name,
-                    'last_name': user.last_name,
-                    'phone': user.phone,
-                    'avatar': user.avatar.url if user.avatar else None,
-                    'role': user.role.name if user.role else None,
-                    'email_verified': user.email_verified,
-                },
-                'email_sent': email_sent
-            }, status=status.HTTP_201_CREATED)
+                'status': 'error',
+                'errors': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({
-            'status': 'error',
-            'errors': serializer.errors
-        }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'status': 'error',
+                'message': 'Внутренняя ошибка сервера при регистрации',
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class VerifyEmailView(APIView):
@@ -245,3 +252,79 @@ class VerifyEmailView(APIView):
                 'status': 'error',
                 'message': 'Недействительный или просроченный токен'
             }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ProductListAPIView(generics.ListAPIView):
+    """
+    API для получения списка товаров с возможностью фильтрации и поиска.
+
+    Поддерживаемые фильтры:
+    - Ценовой диапазон: price_min, price_max, price_rrc_min, price_rrc_max
+    - Количество: quantity_min, quantity_max, in_stock
+    - Магазин: shop_id, shop_name, supplier
+    - Категория: category_id, category_name
+    - Поиск по названию: name
+    - Поиск по модели: model
+    - Поиск по характеристикам: parameter
+    - Внешний ID: external_id
+    """
+    queryset = ProductInfo.objects.select_related(
+        'product', 'shop', 'product__category'
+    ).prefetch_related(
+        'product_parameters__parameter'
+    ).all()
+
+    serializer_class = ProductInfoSerializer
+    filterset_class = ProductInfoFilter
+    permission_classes = []
+
+    def get_queryset(self):
+        """Оптимизация запросов и сортировка"""
+        queryset = super().get_queryset()
+
+        # Сортировка по параметру из запроса
+        ordering = self.request.query_params.get('ordering', '-id')
+
+        # Валидация полей сортировки
+        valid_ordering_fields = [
+            'id', '-id', 'price', '-price', 'quantity', '-quantity',
+            'name', '-name', 'product__name', '-product__name',
+            'shop__name', '-shop__name', 'created_at', '-created_at'
+        ]
+
+        if ordering in valid_ordering_fields:
+            queryset = queryset.order_by(ordering)
+
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        """Переопределение для добавления мета-информации"""
+        queryset = self.filter_queryset(self.get_queryset())
+
+        # Пагинация
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+
+        # Добавляем статистику
+        response_data = {
+            'count': queryset.count(),
+            'results': serializer.data,
+            'filters_available': {
+                'price_range': {
+                    'min': queryset.aggregate(models.Min('price'))['price__min'],
+                    'max': queryset.aggregate(models.Max('price'))['price__max']
+                },
+                'categories': list(queryset.values_list(
+                    'product__category__name', flat=True
+                ).distinct()),
+                'shops': list(queryset.values_list(
+                    'shop__name', flat=True
+                ).distinct())
+            }
+        }
+
+        return Response(response_data)
