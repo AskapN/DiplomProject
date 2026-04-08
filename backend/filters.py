@@ -71,3 +71,20 @@ class ProductInfoFilter(filters.FilterSet):
                 # Если строка не является числом, ищем по имени
                 return queryset.filter(shop__name__icontains=value)
         return queryset.filter(shop=value)
+
+    def filter_name(self, queryset, name, value):
+        """Поиск по наименованию товара (в ProductInfo и Product)"""
+        if value:
+            return queryset.filter(
+                models.Q(name__icontains=value) |
+                models.Q(product__name__icontains=value)
+            )
+        return queryset
+
+    def filter_parameter(self, queryset, name, value):
+        """Поиск по характеристикам товара"""
+        if value:
+            return queryset.filter(
+                product_parameters__value__icontains=value
+            ).distinct()
+        return queryset
