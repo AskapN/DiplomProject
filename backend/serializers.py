@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.core.exceptions import ValidationError
 
-from .models import CustomUser, UserRole, Product, ProductInfo, ProductParameter, Parameter, Shop, Category
+from backend.models import *
 
 
 class LoginSerializer(serializers.Serializer):
@@ -124,3 +124,33 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = ['id', 'category', 'name', 'product_infos']
+
+
+class OrderItemSerializer(serializers.ModelSerializer):
+    """Сериализатор позиции заказа с расчётной суммой"""
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+    price = serializers.DecimalField(source='product.price', read_only=True, max_digits=10, decimal_places=2)
+    total = serializers.SerializerMethodField()
+
+    class Meta:
+        model = OrderItem
+        fields = ['id', 'product_name', 'shop_name', 'price', 'quantity', 'total']
+
+    def get_total(self, obj):
+        """Расчёт суммы позиции (цена × количество)"""
+        return obj.product.price * obj.quantity
+
+
+class OrderSerializer(serializers.ModelSerializer):
+    """Сериализатор заказа с позициями и общей суммой"""
+    items = OrderItemSerializer(source='order_items', many=True, read_only=True)
+    total_price = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Order
+        fields = ['id', 'date', 'status', 'items', 'total_price']
+
+    def get_total_price(self, obj):
+        """Расчёт общей суммы заказа"""
+        return obj.get_total_price()

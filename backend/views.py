@@ -13,8 +13,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from django_filters import rest_framework as filters
 
-from backend.models import CustomUser, ProductInfo
-from backend.serializers import LoginSerializer, RegisterSerializer, ProductInfoSerializer
+from backend.models import CustomUser, ProductInfo, Order, OrderItem
+from backend.serializers import *
 
 from backend.permission import IsShopOrShopEmployee
 from backend.utils import load_products_from_data, parse_file_content, send_verification_email
@@ -328,3 +328,153 @@ class ProductListAPIView(generics.ListAPIView):
         }
 
         return Response(response_data)
+
+
+class CartAPIView(APIView):
+    """API для просмотра текущей корзины пользователя"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        """Получить корзину пользователя (статус NEW)"""
+        cart, created = Order.objects.get_or_create(
+            user=request.user,
+            status=Order.StatusChoices.NEW
+        )
+        serializer = OrderSerializer(cart)
+        return Response(serializer.data)
+
+
+class AddToCartAPIView(APIView):
+    """API для добавления товара в корзину"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        """Добавить товар в корзину"""
+        product_info_id = request.data.get('product_info_id')
+        quantity = request.data.get('quantity', 1)
+
+        if not product_info_id:
+            return Response({
+                'status': 'error',
+                'message': 'Не указан product_info_id'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            product_info = ProductInfo.objects.get(id=product_info_id)
+        except ProductInfo.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': 'Товар не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Проверка наличия товара
+        if product_info.quantity < quantity:
+            return Response({
+                'status': 'error',
+                'message': f'Недостаточно товара на складе. Доступно: {product_info.quantity}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Получение или создание корзины
+        cart, created = Order.objects.get_or_create(
+            user=request.user,
+            status=Order.StatusChoices.NEW
+        )
+
+        # Проверка, есть ли уже этот товар в корзине
+        order_item, item_created = OrderItem.objects.get_or_create(
+            order=cart,
+            product=product_info,
+            shop=product_info.shop,
+            defaults={'quantity': quantity}
+        )
+
+        if not item_created:
+            # Обновляем количество, если товар уже в корзине
+            order_item.quantity += quantity
+            if order_item.quantity > product_info.quantity:
+                return Response({
+                    'status': 'error',
+                    'message': f'Недостаточно товара на складе. Доступно: {product_info.quantity}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            order_item.save()
+
+        serializer = OrderSerializer(cart)
+        return Response({
+            'status': 'success',
+            'message': 'Товар добавлен в корзину',
+            'cart': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class UpdateCartItemAPIView(APIView):
+    """API для обновления количества товара в корзине"""
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, item_id, *args, **kwargs):
+        """Обновить количество товара"""
+        quantity = request.data.get('quantity')
+
+        if not quantity:
+            return Response({
+                'status': 'error',
+                'message': 'Не указано количество'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            order_item = OrderItem.objects.get(
+                id=item_id,
+                order__user=request.user,
+                order__status=Order.StatusChoices.NEW
+            )
+        except OrderItem.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': 'Позиция не найдена'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Проверка наличия товара
+        if quantity > order_item.product.quantity:
+            return Response({
+                'status': 'error',
+                'message': f'Недостаточно товара на складе. Доступно: {order_item.product.quantity}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        order_item.quantity = quantity
+        order_item.save()
+
+        cart = order_item.order
+        serializer = OrderSerializer(cart)
+        return Response({
+            'status': 'success',
+            'message': 'Количество обновлено',
+            'cart': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class RemoveFromCartAPIView(APIView):
+    """API для удаления товара из корзины"""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, item_id, *args, **kwargs):
+        """Удалить товар из корзины"""
+        try:
+            order_item = OrderItem.objects.get(
+                id=item_id,
+                order__user=request.user,
+                order__status=Order.StatusChoices.NEW
+            )
+        except OrderItem.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': 'Позиция не найдена'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        cart = order_item.order
+        order_item.delete()
+
+        serializer = OrderSerializer(cart)
+        return Response({
+            'status': 'success',
+            'message': 'Товар удалён из корзины',
+            'cart': serializer.data
+        }, status=status.HTTP_200_OK)
