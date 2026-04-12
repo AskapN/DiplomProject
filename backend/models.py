@@ -332,6 +332,56 @@ class ProductParameter(models.Model):
         unique_together = ['product_info', 'parameter']
 
 
+class Contact(models.Model):
+    """Модель контактных данных пользователя.
+
+    Содержит адрес доставки и контактный телефон пользователя.
+
+    Поля:
+    - user: Ссылка на пользователя (ForeignKey на CustomUser)
+    - city: Город доставки (максимум 40 символов)
+    - street: Улица доставки (максимум 40 символов)
+    - house: Номер дома (максимум 40 символов)
+    - apartment: Номер квартиры (максимум 40 символов, опционально)
+    - phone: Контактный телефон с валидацией формата (максимум 20 символов)
+
+    Связи:
+    - Нет прямых связей (связана только с пользователем)
+
+    Примечание:
+    - Телефон валидируется регулярным выражением для международного формата
+    - Квартира является опциональным полем (может быть пустой)
+    """
+    user = models.ForeignKey(CustomUser, verbose_name='Пользователь', on_delete=models.CASCADE, related_name='contacts')
+    last_name = models.CharField(max_length=40, verbose_name='Фамилия')
+    first_name = models.CharField(max_length=40, verbose_name='Имя')
+    patronymic = models.CharField(max_length=40, verbose_name='Отчество')
+    city = models.CharField(max_length=40, verbose_name='Город')
+    street = models.CharField(max_length=40, verbose_name='Улица')
+    house = models.CharField(max_length=40, verbose_name='Дом')
+    building = models.CharField(max_length=40, verbose_name='Корпус')
+    structure = models.CharField(max_length=40, verbose_name='Строение')
+    apartment = models.CharField(max_length=40, verbose_name='Квартира', blank=True)
+    email = models.EmailField(max_length=50, verbose_name='Email')
+    phone = models.CharField(
+        max_length=20,
+        verbose_name='Телефон',
+        validators=[
+            RegexValidator(
+                regex=r'^\+?1?\d{9,15}$',
+                message='Введите корректный номер телефона'
+            )
+        ]
+    )
+
+    class Meta:
+        verbose_name = 'Контакты пользователя'
+        verbose_name_plural = 'Список контактов пользователя'
+
+    def __str__(self):
+        return f'г.{self.city}, ул.{self.street}, д.{self.house}, кв.{self.apartment}, тел.:{self.phone}'
+
+
 class Order(models.Model):
     """Модель заказа.
 
@@ -370,6 +420,8 @@ class Order(models.Model):
         choices=StatusChoices.choices,
         default=StatusChoices.NEW
     )
+    contact = models.ForeignKey(Contact, verbose_name='Контакт', on_delete=models.SET_NULL, null=True, blank=True,
+                                related_name='orders')
 
     class Meta:
         verbose_name = 'Заказ'
@@ -417,47 +469,3 @@ class OrderItem(models.Model):
     def get_price(self):
         """Возвращает стоимость позиции (цена × количество)"""
         return self.product.price * self.quantity
-
-
-class Contact(models.Model):
-    """Модель контактных данных пользователя.
-
-    Содержит адрес доставки и контактный телефон пользователя.
-
-    Поля:
-    - user: Ссылка на пользователя (ForeignKey на CustomUser)
-    - city: Город доставки (максимум 40 символов)
-    - street: Улица доставки (максимум 40 символов)
-    - house: Номер дома (максимум 40 символов)
-    - apartment: Номер квартиры (максимум 40 символов, опционально)
-    - phone: Контактный телефон с валидацией формата (максимум 20 символов)
-
-    Связи:
-    - Нет прямых связей (связана только с пользователем)
-
-    Примечание:
-    - Телефон валидируется регулярным выражением для международного формата
-    - Квартира является опциональным полем (может быть пустой)
-    """
-    user = models.ForeignKey(CustomUser, verbose_name='Пользователь', on_delete=models.CASCADE, related_name='contacts')
-    city = models.CharField(max_length=40, verbose_name='Город')
-    street = models.CharField(max_length=40, verbose_name='Улица')
-    house = models.CharField(max_length=40, verbose_name='Дом')
-    apartment = models.CharField(max_length=40, verbose_name='Квартира', blank=True)
-    phone = models.CharField(
-        max_length=20,
-        verbose_name='Телефон',
-        validators=[
-            RegexValidator(
-                regex=r'^\+?1?\d{9,15}$',
-                message='Введите корректный номер телефона'
-            )
-        ]
-    )
-
-    class Meta:
-        verbose_name = 'Контакты пользователя'
-        verbose_name_plural = 'Список контактов пользователя'
-
-    def __str__(self):
-        return f'г.{self.city}, ул.{self.street}, д.{self.house}, кв.{self.apartment}, тел.:{self.phone}'

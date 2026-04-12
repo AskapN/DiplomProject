@@ -13,7 +13,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from django_filters import rest_framework as filters
 
-from backend.models import CustomUser, ProductInfo, Order, OrderItem
+from backend.models import CustomUser, ProductInfo, Order, OrderItem, Contact
 from backend.serializers import *
 
 from backend.permission import IsShopOrShopEmployee
@@ -477,4 +477,166 @@ class RemoveFromCartAPIView(APIView):
             'status': 'success',
             'message': 'Товар удалён из корзины',
             'cart': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class ContactAPIView(APIView):
+    """API для создания и просмотра контактных данных пользователя"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        """Создать новый контакт"""
+        serializer = ContactSerializer(data=request.data, context={'request': request})
+
+        if serializer.is_valid():
+            contact = serializer.save()
+            return Response({
+                'status': 'success',
+                'message': 'Контакт успешно создан',
+                'contact': ContactSerializer(contact).data
+            }, status=status.HTTP_201_CREATED)
+
+        return Response({
+            'status': 'error',
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request, *args, **kwargs):
+        """Получить список контактов текущего пользователя"""
+        contacts = Contact.objects.filter(user=request.user)
+        serializer = ContactSerializer(contacts, many=True)
+        return Response({
+            'status': 'success',
+            'contacts': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class ContactDetailView(APIView):
+    """API для просмотра, обновления и удаления конкретного контакта"""
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self, contact_id, user):
+        """Получить контакт или вернуть 404"""
+        try:
+            return Contact.objects.get(id=contact_id, user=user)
+        except Contact.DoesNotExist:
+            return None
+
+    def get(self, request, contact_id, *args, **kwargs):
+        """Получить конкретный контакт"""
+        contact = self.get_object(contact_id, request.user)
+        if not contact:
+            return Response({
+                'status': 'error',
+                'message': 'Контакт не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ContactSerializer(contact)
+        return Response({
+            'status': 'success',
+            'contact': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+    def patch(self, request, contact_id, *args, **kwargs):
+        """Частичное обновление контакта"""
+        contact = self.get_object(contact_id, request.user)
+        if not contact:
+            return Response({
+                'status': 'error',
+                'message': 'Контакт не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ContactSerializer(contact, data=request.data, partial=True, context={'request': request})
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                'status': 'success',
+                'message': 'Контакт успешно обновлен',
+                'contact': serializer.data
+            }, status=status.HTTP_200_OK)
+
+        return Response({
+            'status': 'error',
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, contact_id, *args, **kwargs):
+        """Удалить контакт"""
+        contact = self.get_object(contact_id, request.user)
+        if not contact:
+            return Response({
+                'status': 'error',
+                'message': 'Контакт не найден'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        contact.delete()
+        return Response({
+            'status': 'success',
+            'message': 'Контакт успешно удален'
+        }, status=status.HTTP_200_OK)
+
+
+class ConfirmOrderAPIView(APIView):
+    """API для подтверждения заказа с контактными данными"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        """Подтвердить заказ с контактными данными"""
+        serializer = ConfirmOrderSerializer(data=request.data, context={'request': request})
+
+        if not serializer.is_valid():
+            return Response({
+                'status': 'error',
+                'errors': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Получаем корзину пользователя
+        try:
+            cart = Order.objects.get(user=request.user, status=Order.StatusChoices.NEW)
+        except Order.DoesNotExist:
+            return Response({
+                'status': 'error',
+                'message': 'Корзина пуста'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Проверяем, что в корзине есть товары
+        if not cart.order_items.exists():
+            return Response({
+                'status': 'error',
+                'message': 'Корзина пуста'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Получаем или создаем контакт
+        contact = serializer.validated_data.get('contact')
+        if not contact:
+            # Создаем новый контакт
+            contact_data = {
+                'user': request.user,
+                'last_name': serializer.validated_data['last_name'],
+                'first_name': serializer.validated_data['first_name'],
+                'patronymic': serializer.validated_data.get('patronymic', ''),
+                'email': serializer.validated_data.get('email', ''),
+                'phone': serializer.validated_data['phone'],
+                'city': serializer.validated_data['city'],
+                'street': serializer.validated_data['street'],
+                'house': serializer.validated_data['house'],
+                'building': serializer.validated_data.get('building', ''),
+                'structure': serializer.validated_data.get('structure', ''),
+                'apartment': serializer.validated_data.get('apartment', ''),
+            }
+            contact = Contact.objects.create(**contact_data)
+
+        # Привязываем контакт к заказу и меняем статус
+        cart.contact = contact
+        cart.status = Order.StatusChoices.CONFIRMED
+        cart.save()
+
+        # Сериализуем подтвержденный заказ
+        order_serializer = OrderSerializer(cart)
+
+        return Response({
+            'status': 'success',
+            'message': 'Заказ успешно подтвержден',
+            'order': order_serializer.data
         }, status=status.HTTP_200_OK)

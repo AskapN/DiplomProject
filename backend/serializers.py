@@ -154,3 +154,59 @@ class OrderSerializer(serializers.ModelSerializer):
     def get_total_price(self, obj):
         """Расчёт общей суммы заказа"""
         return obj.get_total_price()
+
+
+class ContactSerializer(serializers.ModelSerializer):
+    """Сериализатор контактных данных пользователя"""
+
+    class Meta:
+        model = Contact
+        fields = [
+            'id', 'user', 'last_name', 'first_name', 'patronymic',
+            'email', 'phone', 'city', 'street', 'house',
+            'building', 'structure', 'apartment'
+        ]
+        extra_kwargs = {
+            'user': {'read_only': True}
+        }
+
+    def create(self, validated_data):
+        """Автоматически привязываем контакт к текущему пользователю"""
+        validated_data['user'] = self.context['request'].user
+        return super().create(validated_data)
+
+
+class ConfirmOrderSerializer(serializers.Serializer):
+    """Сериализатор для подтверждения заказа с контактными данными"""
+    contact_id = serializers.IntegerField(required=False, allow_null=True)
+    last_name = serializers.CharField(max_length=40, required=False)
+    first_name = serializers.CharField(max_length=40, required=False)
+    patronymic = serializers.CharField(max_length=40, required=False)
+    email = serializers.EmailField(max_length=50, required=False)
+    phone = serializers.CharField(max_length=20, required=False)
+    city = serializers.CharField(max_length=40, required=False)
+    street = serializers.CharField(max_length=40, required=False)
+    house = serializers.CharField(max_length=40, required=False)
+    building = serializers.CharField(max_length=40, required=False)
+    structure = serializers.CharField(max_length=40, required=False)
+    apartment = serializers.CharField(max_length=40, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        """Валидация: либо указан contact_id, либо необходимые контактные данные"""
+        contact_id = attrs.get('contact_id')
+
+        if contact_id  is not None:
+            # Проверяем существование контакта
+            try:
+                contact = Contact.objects.get(id=contact_id, user=self.context['request'].user)
+                attrs['contact'] = contact
+            except Contact.DoesNotExist:
+                raise serializers.ValidationError('Контакт не найден или не принадлежит вам')
+        else:
+            # Проверяем наличие всех обязательных полей для нового контакта
+            required_fields = ['last_name', 'first_name', 'phone', 'email', 'city', 'street', 'house']
+            for field in required_fields:
+                if not attrs.get(field):
+                    raise serializers.ValidationError(f'Поле {field} обязательно при создании нового контакта')
+
+        return attrs

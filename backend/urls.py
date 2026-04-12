@@ -1,7 +1,8 @@
 from django.urls import path
 from backend.views import (
     PartnerUpdate, LoginView, RegisterView, VerifyEmailView, ProductListAPIView,
-    CartAPIView, AddToCartAPIView, UpdateCartItemAPIView, RemoveFromCartAPIView
+    CartAPIView, AddToCartAPIView, UpdateCartItemAPIView, RemoveFromCartAPIView,
+    ContactAPIView, ContactDetailView, ConfirmOrderAPIView
 )
 
 urlpatterns = [
@@ -14,4 +15,7 @@ urlpatterns = [
     path('cart/add/', AddToCartAPIView.as_view(), name='add-to-cart'),
     path('cart/update/<int:item_id>/', UpdateCartItemAPIView.as_view(), name='update-cart-item'),
     path('cart/remove/<int:item_id>/', RemoveFromCartAPIView.as_view(), name='remove-from-cart'),
+    path('contact/', ContactAPIView.as_view(), name='contact'),
+    path('contact/<int:contact_id>/', ContactDetailView.as_view(), name='contact-detail'),
+    path('order/confirm/', ConfirmOrderAPIView.as_view(), name='confirm-order'),
 ]
