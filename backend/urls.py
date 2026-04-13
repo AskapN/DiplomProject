@@ -2,7 +2,7 @@ from django.urls import path
 from backend.views import (
     PartnerUpdate, LoginView, RegisterView, VerifyEmailView, ProductListAPIView,
     CartAPIView, AddToCartAPIView, UpdateCartItemAPIView, RemoveFromCartAPIView,
-    ContactAPIView, ContactDetailView, ConfirmOrderAPIView
+    ContactAPIView, ContactDetailView, ConfirmOrderAPIView, OrderListAPIView, OrderDetailView
 )
 
 urlpatterns = [
@@ -18,4 +18,6 @@ urlpatterns = [
     path('contact/', ContactAPIView.as_view(), name='contact'),
     path('contact/<int:contact_id>/', ContactDetailView.as_view(), name='contact-detail'),
     path('order/confirm/', ConfirmOrderAPIView.as_view(), name='confirm-order'),
+    path('orders/', OrderListAPIView.as_view(), name='order-list'),
+    path('orders/<int:order_id>/', OrderDetailView.as_view(), name='order-detail'),
 ]

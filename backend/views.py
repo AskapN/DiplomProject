@@ -17,7 +17,7 @@ from backend.models import CustomUser, ProductInfo, Order, OrderItem, Contact
 from backend.serializers import *
 
 from backend.permission import IsShopOrShopEmployee
-from backend.utils import load_products_from_data, parse_file_content, send_verification_email
+from backend.utils import load_products_from_data, parse_file_content, send_verification_email, send_order_confirmation_email
 
 from backend.filters import ProductInfoFilter
 
@@ -632,6 +632,22 @@ class ConfirmOrderAPIView(APIView):
         cart.status = Order.StatusChoices.CONFIRMED
         cart.save()
 
+        # Уменьшаем количество товаров в наличии
+        for item in cart.order_items.all():
+            product_info = item.product
+            if product_info.quantity >= item.quantity:
+                product_info.quantity -= item.quantity
+                product_info.save()
+            else:
+                # Если товара недостаточно, возвращаем ошибку
+                return Response({
+                    'status': 'error',
+                    'message': f'Недостаточно товара "{product_info.name}" на складе. Доступно: {product_info.quantity}, требуется: {item.quantity}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Отправляем email уведомления
+        send_order_confirmation_email(cart)
+
         # Сериализуем подтвержденный заказ
         order_serializer = OrderSerializer(cart)
 
@@ -639,4 +655,106 @@ class ConfirmOrderAPIView(APIView):
             'status': 'success',
             'message': 'Заказ успешно подтвержден',
             'order': order_serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class OrderListAPIView(APIView):
+    """API для просмотра списка заказов текущего пользователя или магазина"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        """Получить список заказов в зависимости от роли пользователя"""
+        user = request.user
+
+        # Если пользователь - покупатель, показываем только его заказы
+        if user.is_buyer():
+            orders = Order.objects.filter(user=user).order_by('-date')
+
+        # Если пользователь - владелец магазина, показываем заказы с товарами из его магазина
+        elif user.is_shop():
+            try:
+                shop = user.shop
+                # Получаем заказы, которые содержат товары из этого магазина
+                orders = Order.objects.filter(
+                    order_items__shop=shop
+                ).distinct().order_by('-date')
+            except Shop.DoesNotExist:
+                orders = Order.objects.none()
+
+        # Если пользователь - сотрудник магазина, показываем заказы с товарами из магазинов, где он работает
+        elif user.is_shop_employee():
+            # Получаем магазины, где работает сотрудник
+            employments = user.shop_employments.filter(is_active=True)
+            shop_ids = employments.values_list('shop_id', flat=True)
+            # Получаем заказы, которые содержат товары из этих магазинов
+            orders = Order.objects.filter(
+                order_items__shop_id__in=shop_ids
+            ).distinct().order_by('-date')
+
+        # Администратор видит все заказы
+        elif user.is_admin():
+            orders = Order.objects.all().order_by('-date')
+
+        else:
+            orders = Order.objects.none()
+
+        serializer = OrderSerializer(orders, many=True)
+        return Response({
+            'status': 'success',
+            'count': orders.count(),
+            'orders': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class OrderDetailView(APIView):
+    """API для просмотра конкретного заказа с проверкой прав доступа"""
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self, order_id, user):
+        """Получить заказ с проверкой прав доступа"""
+        try:
+            order = Order.objects.get(id=order_id)
+
+            # Покупатель может видеть только свои заказы
+            if user.is_buyer():
+                if order.user != user:
+                    return None
+
+            # Владелец магазина может видеть заказы с товарами из своего магазина
+            elif user.is_shop():
+                try:
+                    shop = user.shop
+                    if not order.order_items.filter(shop=shop).exists():
+                        return None
+                except Shop.DoesNotExist:
+                    return None
+
+            # Сотрудник магазина может видеть заказы с товарами из магазинов, где он работает
+            elif user.is_shop_employee():
+                employments = user.shop_employments.filter(is_active=True)
+                shop_ids = employments.values_list('shop_id', flat=True)
+                if not order.order_items.filter(shop_id__in=shop_ids).exists():
+                    return None
+
+            # Администратор видит все заказы
+            elif not user.is_admin():
+                return None
+
+            return order
+        except Order.DoesNotExist:
+            return None
+
+    def get(self, request, order_id, *args, **kwargs):
+        """Получить конкретный заказ"""
+        order = self.get_object(order_id, request.user)
+        if not order:
+            return Response({
+                'status': 'error',
+                'message': 'Заказ не найден или у вас нет прав на просмотр'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = OrderSerializer(order)
+        return Response({
+            'status': 'success',
+            'order': serializer.data
         }, status=status.HTTP_200_OK)

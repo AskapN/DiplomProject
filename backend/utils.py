@@ -204,3 +204,106 @@ def send_verification_email(user, request):
     except Exception as e:
         print(f"Ошибка отправки email: {e}")
         return False
+
+
+def send_order_confirmation_email(order):
+    """Отправляет email уведомления о подтверждении заказа"""
+    from backend.models import CustomUser
+
+    # Формируем информацию о заказе
+    items_info = ""
+    for item in order.order_items.all():
+        items_info += f"- {item.product.name} (Магазин: {item.shop.name}) × {item.quantity} шт. = {item.get_price()} руб.\n"
+
+    total_price = order.get_total_price()
+
+    # Информация о контакте
+    contact_info = ""
+    if order.contact:
+        contact_info = f"""
+Контактные данные:
+ФИО: {order.contact.last_name} {order.contact.first_name} {order.contact.patronymic}
+Email: {order.contact.email}
+Телефон: {order.contact.phone}
+Адрес: г.{order.contact.city}, ул.{order.contact.street}, д.{order.contact.house}, корп.{order.contact.building}, стр.{order.contact.structure}, кв.{order.contact.apartment}
+ID контакта: {order.contact.id}
+"""
+
+    # Тема и сообщение для пользователя
+    subject_user = f'Заказ #{order.id} подтвержден'
+    message_user = f'''
+Здравствуйте, {order.user.first_name}!
+
+Ваш заказ #{order.id} успешно подтвержден.
+
+ID корзины: {order.id}
+ID контакта: {order.contact.id if order.contact else 'Не указан'}
+Дата заказа: {order.date}
+Статус: {order.get_status_display()}
+
+Товары в заказе:
+{items_info}
+
+Общая сумма: {total_price} руб.
+{contact_info}
+Спасибо за ваш заказ!
+'''
+
+    # Тема и сообщение для администраторов
+    subject_admin = f'Новый заказ #{order.id}'
+    message_admin = f'''
+Поступил новый заказ #{order.id} от пользователя {order.user.email} ({order.user.get_full_name()})
+
+ID корзины: {order.id}
+ID контакта: {order.contact.id if order.contact else 'Не указан'}
+Дата заказа: {order.date}
+Статус: {order.get_status_display()}
+
+Товары в заказе:
+{items_info}
+
+Общая сумма: {total_price} руб.
+{contact_info}
+'''
+
+    # Список email для отправки
+    recipients = [order.user.email]
+
+    # Добавляем администраторов
+    admins = CustomUser.objects.filter(role__name='admin')
+    recipients.extend([admin.email for admin in admins if admin.email])
+
+    # Добавляем владельцев магазинов
+    shops_in_order = set()
+    for item in order.order_items.all():
+        shops_in_order.add(item.shop.user.email)
+    recipients.extend(list(shops_in_order))
+
+    # Удаляем дубликаты
+    recipients = list(set(recipients))
+
+    # Отправляем email каждому получателю
+    sent_count = 0
+    for recipient in recipients:
+        if recipient == order.user.email:
+            # Пользователю отправляем с темой для пользователя
+            message = message_user
+            subject = subject_user
+        else:
+            # Администраторам и магазинам отправляем с темой для админов
+            message = message_admin
+            subject = subject_admin
+
+        try:
+            send_mail(
+                subject,
+                message,
+                settings.DEFAULT_FROM_EMAIL,
+                [recipient],
+                fail_silently=True,
+            )
+            sent_count += 1
+        except Exception as e:
+            print(f"Ошибка отправки email на {recipient}: {e}")
+
+    return sent_count
