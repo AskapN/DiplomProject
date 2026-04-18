@@ -1,13 +1,17 @@
 from django.core.mail import send_mail
 from django.conf import settings
-from django.urls import reverse
 from django.contrib.sites.shortcuts import get_current_site
+from django.db import transaction
 
 import json
 from decimal import Decimal
 import yaml
+import logging
 
 from backend.models import Shop, Category, Product, ProductInfo, Parameter, ProductParameter
+
+logger = logging.getLogger(__name__)
+
 
 def load_products_from_data(data, user):
     """
@@ -55,80 +59,81 @@ def load_products_from_data(data, user):
         - Модель товара сохраняется в поле model модели ProductInfo
     """
     try:
-        # Создание или получение магазина
-        shop, _ = Shop.objects.get_or_create(
-            name=data.get('shop', 'Default Shop'),
-            user_id=user.id
-        )
+        with transaction.atomic():
+            # Создание или получение магазина
+            shop, _ = Shop.objects.get_or_create(
+                name=data.get('shop', 'Default Shop'),
+                user_id=user.id
+            )
 
-        categories_count = 0
-        products_count = 0
+            categories_count = 0
+            products_count = 0
 
-        # Словарь для быстрого поиска категорий по внешнему ID
-        category_map = {}
+            # Словарь для быстрого поиска категорий по внешнему ID
+            category_map = {}
 
-        # Загрузка категорий
-        if 'categories' in data:
-            for category_data in data['categories']:
-                category_object, created = Category.objects.get_or_create(
-                    id=category_data.get('id'),
-                    defaults={'name': category_data.get('name', 'Unknown')}
-                )
-                category_object.shops.add(shop.id)
-                category_map[category_data.get('id')] = category_object
-                if created:
-                    categories_count += 1
-
-        # Удаление старых товаров из магазина
-        ProductInfo.objects.filter(shop_id=shop.id).delete()
-
-        # Загрузка товаров
-        if 'goods' in data:
-            for item in data['goods']:
-                try:
-                    # Получение категории по внешнему ID
-                    category_id = item.get('category')
-                    if category_id not in category_map:
-                        # Если категория не найдена, пропускаем товар
-                        print(f"Категория с ID {category_id} не найдена для товара {item.get('name')}")
-                        continue
-
-                    category = category_map[category_id]
-
-                    # Создание товара
-                    product, _ = Product.objects.get_or_create(
-                        name=item.get('name'),
-                        category=category
+            # Загрузка категорий
+            if 'categories' in data:
+                for category_data in data['categories']:
+                    category_object, created = Category.objects.get_or_create(
+                        id=category_data.get('id'),
+                        defaults={'name': category_data.get('name', 'Unknown')}
                     )
+                    category_object.shops.add(shop.id)
+                    category_map[category_data.get('id')] = category_object
+                    if created:
+                        categories_count += 1
 
-                    # Создание информации о товаре в магазине
-                    product_info = ProductInfo.objects.create(
-                        product_id=product.id,
-                        shop_id=shop.id,
-                        external_id=item.get('id'),
-                        model=item.get('model', ''),
-                        name=item.get('name'),
-                        quantity=int(item.get('quantity', 0)),
-                        price=Decimal(str(item.get('price', 0))),
-                        price_rrc=Decimal(str(item.get('price_rrc', 0)))
-                    )
+            # Удаление старых товаров из магазина
+            ProductInfo.objects.filter(shop_id=shop.id).delete()
 
-                    # Добавление параметров товара
-                    if 'parameters' in item:
-                        for param_name, param_value in item['parameters'].items():
-                            parameter_object, _ = Parameter.objects.get_or_create(name=param_name)
-                            ProductParameter.objects.create(
-                                product_info_id=product_info.id,
-                                parameter_id=parameter_object.id,
-                                value=param_value
+            # Загрузка товаров
+            if 'goods' in data:
+                for item in data['goods']:
+                    try:
+                        # Получение категории по внешнему ID
+                        category_id = item.get('category')
+                        if category_id not in category_map:
+                            logger.warning(
+                                f"Категория с ID {category_id} не найдена для товара {item.get('name')}"
                             )
+                            continue
 
-                    products_count += 1
+                        category = category_map[category_id]
 
-                except Exception as e:
-                    # Логирование ошибки, но продолжение загрузки
-                    print(f"Ошибка при загрузке товара {item.get('name')}: {str(e)}")
-                    continue
+                        # Создание товара
+                        product, _ = Product.objects.get_or_create(
+                            name=item.get('name'),
+                            category=category
+                        )
+
+                        # Создание информации о товаре в магазине
+                        product_info = ProductInfo.objects.create(
+                            product_id=product.id,
+                            shop_id=shop.id,
+                            external_id=item.get('id'),
+                            model=item.get('model', ''),
+                            name=item.get('name'),
+                            quantity=int(item.get('quantity', 0)),
+                            price=Decimal(str(item.get('price', 0))),
+                            price_rrc=Decimal(str(item.get('price_rrc', 0)))
+                        )
+
+                        # Добавление параметров товара
+                        if 'parameters' in item:
+                            for param_name, param_value in item['parameters'].items():
+                                parameter_object, _ = Parameter.objects.get_or_create(name=param_name)
+                                ProductParameter.objects.create(
+                                    product_info_id=product_info.id,
+                                    parameter_id=parameter_object.id,
+                                    value=param_value
+                                )
+
+                        products_count += 1
+
+                    except Exception as e:
+                        logger.error(f"Ошибка при загрузке товара {item.get('name')}: {str(e)}")
+                        continue
 
         return {
             'status': True,
@@ -142,6 +147,7 @@ def load_products_from_data(data, user):
             'status': False,
             'error': str(e)
         }
+
 
 def parse_file_content(file_content, file_format='yaml'):
     """
@@ -173,7 +179,19 @@ def parse_file_content(file_content, file_format='yaml'):
 
 
 def send_verification_email(user, request):
-    """Отправляет письмо с подтверждением email"""
+    """
+    Отправляет письмо с ссылкой для подтверждения email пользователя.
+
+    Генерирует уникальный токен, сохраняет его в поле email_verification_token пользователя
+    и отправляет ссылку вида /api/verify-email/?token=...&email=...
+
+    Args:
+        user (CustomUser): Пользователь, которому отправляется письмо
+        request: HTTP-запрос (Django request), используется для получения домена сайта
+
+    Returns:
+        bool: True если письмо успешно отправлено, False если возникла ошибка
+    """
     token = user.generate_email_verification_token()
 
     # Формируем URL для подтверждения
@@ -202,18 +220,42 @@ def send_verification_email(user, request):
         )
         return True
     except Exception as e:
-        print(f"Ошибка отправки email: {e}")
+        logger.error(f"Ошибка отправки email: {e}")
         return False
 
 
 def send_order_confirmation_email(order):
-    """Отправляет email уведомления о подтверждении заказа"""
+    """
+    Отправляет email-уведомления о подтверждении заказа всем заинтересованным сторонам.
+
+    Получатели:
+    - Покупатель: персональное письмо с деталями заказа и адресом доставки
+    - Администраторы (role='admin'): уведомление о новом заказе
+    - Владельцы магазинов, чьи товары входят в заказ: уведомление о новом заказе
+
+    Args:
+        order (Order): Подтверждённый заказ со статусом CONFIRMED
+
+    Returns:
+        int: Количество успешно отправленных писем
+    """
     from backend.models import CustomUser
+
+    # Один запрос со всеми нужными связями
+    order_items = list(
+        order.order_items.select_related('product', 'shop__user').all()
+    )
 
     # Формируем информацию о заказе
     items_info = ""
-    for item in order.order_items.all():
-        items_info += f"- {item.product.name} (Магазин: {item.shop.name}) × {item.quantity} шт. = {item.get_price()} руб.\n"
+    shops_in_order = set()
+    for item in order_items:
+        items_info += (
+            f"- {item.product.name} (Магазин: {item.shop.name})"
+            f" × {item.quantity} шт. = {item.get_price()} руб.\n"
+        )
+        if item.shop.user.email:
+            shops_in_order.add(item.shop.user.email)
 
     total_price = order.get_total_price()
 
@@ -225,7 +267,9 @@ def send_order_confirmation_email(order):
 ФИО: {order.contact.last_name} {order.contact.first_name} {order.contact.patronymic}
 Email: {order.contact.email}
 Телефон: {order.contact.phone}
-Адрес: г.{order.contact.city}, ул.{order.contact.street}, д.{order.contact.house}, корп.{order.contact.building}, стр.{order.contact.structure}, кв.{order.contact.apartment}
+Адрес: г.{order.contact.city}, ул.{order.contact.street},
+д.{order.contact.house}, корп.{order.contact.building},
+стр.{order.contact.structure}, кв.{order.contact.apartment}
 ID контакта: {order.contact.id}
 """
 
@@ -274,9 +318,6 @@ ID контакта: {order.contact.id if order.contact else 'Не указан'
     recipients.extend([admin.email for admin in admins if admin.email])
 
     # Добавляем владельцев магазинов
-    shops_in_order = set()
-    for item in order.order_items.all():
-        shops_in_order.add(item.shop.user.email)
     recipients.extend(list(shops_in_order))
 
     # Удаляем дубликаты
@@ -286,11 +327,9 @@ ID контакта: {order.contact.id if order.contact else 'Не указан'
     sent_count = 0
     for recipient in recipients:
         if recipient == order.user.email:
-            # Пользователю отправляем с темой для пользователя
             message = message_user
             subject = subject_user
         else:
-            # Администраторам и магазинам отправляем с темой для админов
             message = message_admin
             subject = subject_admin
 
@@ -304,6 +343,6 @@ ID контакта: {order.contact.id if order.contact else 'Не указан'
             )
             sent_count += 1
         except Exception as e:
-            print(f"Ошибка отправки email на {recipient}: {e}")
+            logger.error(f"Ошибка отправки email на {recipient}: {e}")
 
     return sent_count

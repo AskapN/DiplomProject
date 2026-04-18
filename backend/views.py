@@ -1,7 +1,7 @@
 from django.http import JsonResponse
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 
 from requests import get
 
@@ -11,15 +11,20 @@ from rest_framework import status, generics
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from django_filters import rest_framework as filters
-
-from backend.models import CustomUser, ProductInfo, Order, OrderItem, Contact
-from backend.serializers import *
+from backend.models import CustomUser, Shop, ProductInfo, ProductImage, Order, OrderItem, Contact
+from backend.serializers import (
+    LoginSerializer, RegisterSerializer, ProductInfoSerializer,
+    OrderSerializer, ContactSerializer,
+    ConfirmOrderSerializer, ProductImageUploadSerializer, ProductImageSerializer
+)
 
 from backend.permission import IsShopOrShopEmployee
-from backend.utils import load_products_from_data, parse_file_content, send_verification_email, send_order_confirmation_email
-
+from backend.utils import (
+    load_products_from_data, parse_file_content,
+    send_verification_email, send_order_confirmation_email
+)
 from backend.filters import ProductInfoFilter
+
 
 class PartnerUpdate(APIView):
     """
@@ -336,10 +341,14 @@ class CartAPIView(APIView):
 
     def get(self, request, *args, **kwargs):
         """Получить корзину пользователя (статус NEW)"""
-        cart, created = Order.objects.get_or_create(
+        cart = Order.objects.filter(
             user=request.user,
             status=Order.StatusChoices.NEW
-        )
+        ).first()
+
+        if not cart:
+            return Response({'status': 'success', 'cart': None, 'message': 'Корзина пуста'})
+
         serializer = OrderSerializer(cart)
         return Response(serializer.data)
 
@@ -537,7 +546,6 @@ class ContactDetailView(APIView):
             'contact': serializer.data
         }, status=status.HTTP_200_OK)
 
-
     def patch(self, request, contact_id, *args, **kwargs):
         """Частичное обновление контакта"""
         contact = self.get_object(contact_id, request.user)
@@ -609,41 +617,47 @@ class ConfirmOrderAPIView(APIView):
 
         # Получаем или создаем контакт
         contact = serializer.validated_data.get('contact')
-        if not contact:
-            # Создаем новый контакт
-            contact_data = {
-                'user': request.user,
-                'last_name': serializer.validated_data['last_name'],
-                'first_name': serializer.validated_data['first_name'],
-                'patronymic': serializer.validated_data.get('patronymic', ''),
-                'email': serializer.validated_data.get('email', ''),
-                'phone': serializer.validated_data['phone'],
-                'city': serializer.validated_data['city'],
-                'street': serializer.validated_data['street'],
-                'house': serializer.validated_data['house'],
-                'building': serializer.validated_data.get('building', ''),
-                'structure': serializer.validated_data.get('structure', ''),
-                'apartment': serializer.validated_data.get('apartment', ''),
-            }
-            contact = Contact.objects.create(**contact_data)
 
-        # Привязываем контакт к заказу и меняем статус
-        cart.contact = contact
-        cart.status = Order.StatusChoices.CONFIRMED
-        cart.save()
+        with transaction.atomic():
+            # Создаём контакт внутри транзакции — откатится при ошибке
+            if not contact:
+                contact_data = {
+                    'user': request.user,
+                    'last_name': serializer.validated_data['last_name'],
+                    'first_name': serializer.validated_data['first_name'],
+                    'patronymic': serializer.validated_data.get('patronymic', ''),
+                    'email': serializer.validated_data.get('email', ''),
+                    'phone': serializer.validated_data['phone'],
+                    'city': serializer.validated_data['city'],
+                    'street': serializer.validated_data['street'],
+                    'house': serializer.validated_data['house'],
+                    'building': serializer.validated_data.get('building', ''),
+                    'structure': serializer.validated_data.get('structure', ''),
+                    'apartment': serializer.validated_data.get('apartment', ''),
+                }
+                contact = Contact.objects.create(**contact_data)
 
-        # Уменьшаем количество товаров в наличии
-        for item in cart.order_items.all():
-            product_info = item.product
-            if product_info.quantity >= item.quantity:
-                product_info.quantity -= item.quantity
-                product_info.save()
-            else:
-                # Если товара недостаточно, возвращаем ошибку
-                return Response({
-                    'status': 'error',
-                    'message': f'Недостаточно товара "{product_info.name}" на складе. Доступно: {product_info.quantity}, требуется: {item.quantity}'
-                }, status=status.HTTP_400_BAD_REQUEST)
+            # Блокируем товары от конкурентных изменений
+            order_items = cart.order_items.select_related('product').select_for_update()
+
+            # Проверяем остатки ДО изменения статуса
+            for item in order_items:
+                product_info = item.product
+                if product_info.quantity < item.quantity:
+                    return Response({
+                        'status': 'error',
+                        'message': f'Недостаточно товара "{product_info.name}" на складе. '
+                                   f'Доступно: {product_info.quantity}, требуется: {item.quantity}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Только после успешной проверки — меняем статус и списываем
+            cart.contact = contact
+            cart.status = Order.StatusChoices.CONFIRMED
+            cart.save()
+
+            for item in order_items:
+                item.product.quantity -= item.quantity
+                item.product.save(update_fields=['quantity'])
 
         # Отправляем email уведомления
         send_order_confirmation_email(cart)
@@ -667,8 +681,10 @@ class OrderListAPIView(APIView):
         user = request.user
 
         # Если пользователь - покупатель, показываем только его заказы
+        _prefetch = ['order_items__product', 'order_items__shop']
+
         if user.is_buyer():
-            orders = Order.objects.filter(user=user).order_by('-date')
+            orders = Order.objects.filter(user=user).prefetch_related(*_prefetch).order_by('-date')
 
         # Если пользователь - владелец магазина, показываем заказы с товарами из его магазина
         elif user.is_shop():
@@ -677,7 +693,7 @@ class OrderListAPIView(APIView):
                 # Получаем заказы, которые содержат товары из этого магазина
                 orders = Order.objects.filter(
                     order_items__shop=shop
-                ).distinct().order_by('-date')
+                ).distinct().prefetch_related(*_prefetch).order_by('-date')
             except Shop.DoesNotExist:
                 orders = Order.objects.none()
 
@@ -689,19 +705,20 @@ class OrderListAPIView(APIView):
             # Получаем заказы, которые содержат товары из этих магазинов
             orders = Order.objects.filter(
                 order_items__shop_id__in=shop_ids
-            ).distinct().order_by('-date')
+            ).distinct().prefetch_related(*_prefetch).order_by('-date')
 
         # Администратор видит все заказы
         elif user.is_admin():
-            orders = Order.objects.all().order_by('-date')
+            orders = Order.objects.all().prefetch_related(*_prefetch).order_by('-date')
 
         else:
             orders = Order.objects.none()
 
         serializer = OrderSerializer(orders, many=True)
+        count = len(serializer.data)
         return Response({
             'status': 'success',
-            'count': orders.count(),
+            'count': count,
             'orders': serializer.data
         }, status=status.HTTP_200_OK)
 
@@ -713,7 +730,9 @@ class OrderDetailView(APIView):
     def get_object(self, order_id, user):
         """Получить заказ с проверкой прав доступа"""
         try:
-            order = Order.objects.get(id=order_id)
+            order = Order.objects.prefetch_related(
+                'order_items__product', 'order_items__shop'
+            ).get(id=order_id)
 
             # Покупатель может видеть только свои заказы
             if user.is_buyer():
@@ -758,3 +777,126 @@ class OrderDetailView(APIView):
             'status': 'success',
             'order': serializer.data
         }, status=status.HTTP_200_OK)
+
+    def patch(self, request, order_id, *args, **kwargs):
+        """Обновить статус заказа (только для админа, владельца магазина и сотрудника)"""
+        user = request.user
+
+        # Проверяем, что пользователь имеет права на изменение статуса
+        if not (user.is_admin() or user.is_shop() or user.is_shop_employee()):
+            return Response({
+                'status': 'error',
+                'message': 'У вас нет прав на изменение статуса заказа'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        # Получаем заказ с проверкой прав доступа
+        order = self.get_object(order_id, user)
+        if not order:
+            return Response({
+                'status': 'error',
+                'message': 'Заказ не найден или у вас нет прав на редактирование'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        # Получаем новый статус
+        new_status = request.data.get('status')
+        if not new_status:
+            return Response({
+                'status': 'error',
+                'message': 'Не указан новый статус'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Проверяем валидность статуса
+        valid_statuses = [choice[0] for choice in Order.StatusChoices.choices]
+        if new_status not in valid_statuses:
+            return Response({
+                'status': 'error',
+                'message': f'Недопустимый статус. Доступные статусы: {valid_statuses}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Обновляем статус
+        order.status = new_status
+        order.save()
+
+        serializer = OrderSerializer(order)
+        return Response({
+            'status': 'success',
+            'message': 'Статус заказа успешно обновлен',
+            'order': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class ProductImageAPIView(APIView):
+    """Получение списка и загрузка изображений товара"""
+    permission_classes = [IsAuthenticated, IsShopOrShopEmployee]
+
+    def _get_product_info(self, product_info_id, user):
+        """Получить ProductInfo с проверкой принадлежности магазину пользователя"""
+        try:
+            product_info = ProductInfo.objects.select_related('shop__user').get(
+                id=product_info_id
+            )
+        except ProductInfo.DoesNotExist:
+            return None, Response(
+                {'status': 'error', 'message': 'Товар не найден'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        if user.is_shop() and product_info.shop.user != user:
+            return None, Response(
+                {'status': 'error', 'message': 'Нет доступа к этому товару'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return product_info, None
+
+    def get(self, request, product_info_id, *args, **kwargs):
+        """Получить все изображения товара"""
+        product_info, error = self._get_product_info(product_info_id, request.user)
+        if error:
+            return error
+        images = product_info.images.all()
+        serializer = ProductImageSerializer(images, many=True, context={'request': request})
+        return Response({'status': 'success', 'images': serializer.data})
+
+    def post(self, request, product_info_id, *args, **kwargs):
+        """Добавить новое изображение товара"""
+        product_info, error = self._get_product_info(product_info_id, request.user)
+        if error:
+            return error
+
+        serializer = ProductImageUploadSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {'status': 'error', 'errors': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        product_image = ProductImage.objects.create(
+            product_info=product_info,
+            image=serializer.validated_data['image']
+        )
+        result = ProductImageSerializer(product_image, context={'request': request})
+        return Response({'status': 'success', 'image': result.data}, status=status.HTTP_201_CREATED)
+
+
+class ProductImageDetailAPIView(APIView):
+    """Удаление конкретного изображения товара"""
+    permission_classes = [IsAuthenticated, IsShopOrShopEmployee]
+
+    def delete(self, request, product_info_id, image_id, *args, **kwargs):
+        """Удалить изображение по ID"""
+        try:
+            product_image = ProductImage.objects.select_related(
+                'product_info__shop__user'
+            ).get(id=image_id, product_info_id=product_info_id)
+        except ProductImage.DoesNotExist:
+            return Response(
+                {'status': 'error', 'message': 'Изображение не найдено'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        if request.user.is_shop() and product_image.product_info.shop.user != request.user:
+            return Response(
+                {'status': 'error', 'message': 'Нет доступа'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        product_image.image.delete(save=False)
+        product_image.delete()
+        return Response({'status': 'success', 'message': 'Изображение удалено'})

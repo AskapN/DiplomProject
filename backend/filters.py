@@ -1,7 +1,6 @@
-import django_filters
 from django_filters import rest_framework as filters
 from django.db import models
-from .models import ProductInfo, Product, Shop, Category, Parameter
+from backend.models import ProductInfo, Shop
 
 
 class ProductInfoFilter(filters.FilterSet):

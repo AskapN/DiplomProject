@@ -4,6 +4,8 @@ from django.core.validators import MinValueValidator, RegexValidator
 
 import secrets
 
+from decimal import Decimal
+
 
 class UserRole(models.Model):
     """Модель роли пользователя.
@@ -125,7 +127,7 @@ class CustomUser(AbstractUser):
     def generate_email_verification_token(self):
         """Генерирует токен для верификации email"""
         self.email_verification_token = secrets.token_urlsafe(32)
-        self.save()
+        self.save(update_fields=['email_verification_token'])
         return self.email_verification_token
 
     def verify_email(self, token):
@@ -133,7 +135,7 @@ class CustomUser(AbstractUser):
         if self.email_verification_token == token:
             self.email_verified = True
             self.email_verification_token = None
-            self.save()
+            self.save(update_fields=['email_verified', 'email_verification_token'])
             return True
         return False
 
@@ -160,7 +162,7 @@ class Shop(models.Model):
     class Meta:
         verbose_name = 'Магазин'
         verbose_name_plural = 'Список магазинов'
-        ordering = ['-name']
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -213,11 +215,10 @@ class Category(models.Model):
     class Meta:
         verbose_name = 'Категория'
         verbose_name_plural = 'Список категорий'
-        ordering = ['-name']
+        ordering = ['name']
 
     def __str__(self):
         return self.name
-
 
 
 class Product(models.Model):
@@ -239,7 +240,7 @@ class Product(models.Model):
     class Meta:
         verbose_name = 'Продукт'
         verbose_name_plural = 'Список продуктов'
-        ordering = ['-name']
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -264,6 +265,7 @@ class ProductInfo(models.Model):
     Связи:
     - ForeignKey: product_parameters (параметры этого товара)
     - ForeignKey: order_items (позиции заказов этого товара)
+    - ForeignKey: images (изображения товара, см. ProductImage)
 
     Ограничения:
     - unique_together: ('product', 'shop') - один товар в одном магазине только один раз
@@ -274,13 +276,47 @@ class ProductInfo(models.Model):
     model = models.CharField(max_length=80, verbose_name='Модель', blank=True)
     name = models.CharField(max_length=40, verbose_name='Название')
     quantity = models.PositiveIntegerField(verbose_name='Количество')
-    price = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Цена', validators=[MinValueValidator(0)])
-    price_rrc = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Цена РРЦ', validators=[MinValueValidator(0)])
+    price = models.DecimalField(
+        max_digits=10, decimal_places=2, verbose_name='Цена', validators=[MinValueValidator(0)]
+    )
+    price_rrc = models.DecimalField(
+        max_digits=10, decimal_places=2, verbose_name='Цена РРЦ', validators=[MinValueValidator(0)]
+    )
 
     class Meta:
         verbose_name = 'Информация о продукте'
         verbose_name_plural = 'Список информации о продуктах'
         unique_together = ['product', 'shop']
+
+
+class ProductImage(models.Model):
+    """Модель изображения товара в магазине.
+
+    Один товар (ProductInfo) может иметь несколько изображений.
+    Файлы сохраняются в директорию media/products/.
+
+    Поля:
+    - product_info: Ссылка на товар в магазине (ForeignKey на ProductInfo)
+    - image: Файл изображения (ImageField, upload_to='products/')
+    - created_at: Дата и время добавления (автоматически при создании)
+
+    Связи:
+    - Нет прямых обратных связей
+    """
+    product_info = models.ForeignKey(
+        ProductInfo, on_delete=models.CASCADE,
+        related_name='images', verbose_name='Товар'
+    )
+    image = models.ImageField(upload_to='products/', verbose_name='Изображение')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата добавления')
+
+    class Meta:
+        verbose_name = 'Изображение товара'
+        verbose_name_plural = 'Изображения товара'
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'Фото #{self.id} — {self.product_info.name}'
 
 
 class Parameter(models.Model):
@@ -299,7 +335,7 @@ class Parameter(models.Model):
     class Meta:
         verbose_name = 'Наименование параметра'
         verbose_name_plural = 'Список параметров'
-        ordering = ['-name']
+        ordering = ['name']
 
     def __str__(self):
         return self.name
@@ -322,8 +358,12 @@ class ProductParameter(models.Model):
     Ограничения:
     - unique_together: ('product_info', 'parameter') - один параметр для товара только один раз
     """
-    product_info = models.ForeignKey(ProductInfo, verbose_name='продукт', on_delete=models.CASCADE, related_name='product_parameters')
-    parameter = models.ForeignKey(Parameter, verbose_name='параметр', on_delete=models.CASCADE, related_name='product_parameters')
+    product_info = models.ForeignKey(
+        ProductInfo, verbose_name='продукт', on_delete=models.CASCADE, related_name='product_parameters'
+    )
+    parameter = models.ForeignKey(
+        Parameter, verbose_name='параметр', on_delete=models.CASCADE, related_name='product_parameters'
+    )
     value = models.CharField(max_length=40, verbose_name='Значение')
 
     class Meta:
@@ -339,18 +379,20 @@ class Contact(models.Model):
 
     Поля:
     - user: Ссылка на пользователя (ForeignKey на CustomUser)
+    - last_name: Фамилия получателя (максимум 40 символов)
+    - first_name: Имя получателя (максимум 40 символов)
+    - patronymic: Отчество получателя (максимум 40 символов)
+    - email: Email получателя (максимум 50 символов)
+    - phone: Телефон с валидацией международного формата (максимум 20 символов)
     - city: Город доставки (максимум 40 символов)
     - street: Улица доставки (максимум 40 символов)
     - house: Номер дома (максимум 40 символов)
-    - apartment: Номер квартиры (максимум 40 символов, опционально)
-    - phone: Контактный телефон с валидацией формата (максимум 20 символов)
+    - building: Корпус (максимум 40 символов, опционально)
+    - structure: Строение (максимум 40 символов, опционально)
+    - apartment: Квартира (максимум 40 символов, опционально)
 
     Связи:
-    - Нет прямых связей (связана только с пользователем)
-
-    Примечание:
-    - Телефон валидируется регулярным выражением для международного формата
-    - Квартира является опциональным полем (может быть пустой)
+    - ForeignKey: orders (заказы, привязанные к этому контакту)
     """
     user = models.ForeignKey(CustomUser, verbose_name='Пользователь', on_delete=models.CASCADE, related_name='contacts')
     last_name = models.CharField(max_length=40, verbose_name='Фамилия')
@@ -359,8 +401,8 @@ class Contact(models.Model):
     city = models.CharField(max_length=40, verbose_name='Город')
     street = models.CharField(max_length=40, verbose_name='Улица')
     house = models.CharField(max_length=40, verbose_name='Дом')
-    building = models.CharField(max_length=40, verbose_name='Корпус')
-    structure = models.CharField(max_length=40, verbose_name='Строение')
+    building = models.CharField(max_length=40, verbose_name='Корпус', blank=True)
+    structure = models.CharField(max_length=40, verbose_name='Строение', blank=True)
     apartment = models.CharField(max_length=40, verbose_name='Квартира', blank=True)
     email = models.EmailField(max_length=50, verbose_name='Email')
     phone = models.CharField(
@@ -433,7 +475,6 @@ class Order(models.Model):
 
     def get_total_price(self):
         """Возвращает общую сумму заказа"""
-        from decimal import Decimal
         total = Decimal('0.00')
         for item in self.order_items.all():
             total += item.product.price * item.quantity
@@ -458,7 +499,9 @@ class OrderItem(models.Model):
     - get_price(): Возвращает стоимость позиции (цена товара × количество)
     """
     order = models.ForeignKey(Order, verbose_name='Заказ', on_delete=models.CASCADE, related_name='order_items')
-    product = models.ForeignKey(ProductInfo, verbose_name='продукт', on_delete=models.CASCADE, related_name='order_items')
+    product = models.ForeignKey(
+        ProductInfo, verbose_name='продукт', on_delete=models.CASCADE, related_name='order_items'
+    )
     shop = models.ForeignKey(Shop, verbose_name='магазин', on_delete=models.CASCADE, related_name='order_items')
     quantity = models.PositiveIntegerField(verbose_name='Количество', validators=[MinValueValidator(1)])
 

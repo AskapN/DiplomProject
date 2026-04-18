@@ -2,7 +2,11 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.core.exceptions import ValidationError
 
-from backend.models import *
+from backend.models import (
+    CustomUser, UserRole, Shop, Category, Product,
+    ProductInfo, ProductImage, Parameter, ProductParameter,
+    Order, OrderItem, Contact
+)
 
 
 class LoginSerializer(serializers.Serializer):
@@ -105,21 +109,40 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = ['id', 'name']
 
 
+class ProductImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductImage
+        fields = ['id', 'image_url', 'created_at']
+
+    def get_image_url(self, obj):
+        request = self.context.get('request')
+        if obj.image and request:
+            return request.build_absolute_uri(obj.image.url)
+        return None
+
+
 class ProductInfoSerializer(serializers.ModelSerializer):
     shop = ShopSerializer(read_only=True)
     parameters = ProductParameterSerializer(source='product_parameters', many=True, read_only=True)
+    images = ProductImageSerializer(many=True, read_only=True)
 
     class Meta:
         model = ProductInfo
         fields = [
             'id', 'shop', 'external_id', 'model', 'name',
-            'quantity', 'price', 'price_rrc', 'parameters'
+            'quantity', 'price', 'price_rrc', 'images', 'parameters'
         ]
+
+
+class ProductImageUploadSerializer(serializers.Serializer):
+    image = serializers.ImageField()
 
 
 class ProductSerializer(serializers.ModelSerializer):
     category = CategorySerializer(read_only=True)
-    product_infos = ProductInfoSerializer(source='product_infos', many=True, read_only=True)
+    product_infos = ProductInfoSerializer(many=True, read_only=True)
 
     class Meta:
         model = Product
@@ -195,7 +218,7 @@ class ConfirmOrderSerializer(serializers.Serializer):
         """Валидация: либо указан contact_id, либо необходимые контактные данные"""
         contact_id = attrs.get('contact_id')
 
-        if contact_id  is not None:
+        if contact_id is not None:
             # Проверяем существование контакта
             try:
                 contact = Contact.objects.get(id=contact_id, user=self.context['request'].user)
