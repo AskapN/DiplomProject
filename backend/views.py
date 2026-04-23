@@ -20,9 +20,9 @@ from backend.serializers import (
 
 from backend.permission import IsShopOrShopEmployee
 from backend.utils import (
-    load_products_from_data, parse_file_content,
-    send_verification_email, send_order_confirmation_email
+    load_products_from_data, parse_file_content
 )
+from backend.tasks import send_verification_email_task, send_order_confirmation_email_task
 from backend.filters import ProductInfoFilter
 
 
@@ -169,8 +169,10 @@ class RegisterView(APIView):
             if serializer.is_valid():
                 user = serializer.save()
 
-                # Отправляем письмо подтверждения
-                email_sent = send_verification_email(user, request)
+                # Отправляем письмо подтверждения асинхронно через Celery
+                current_site = get_current_site(request)
+                send_verification_email_task.delay(user.id, current_site.domain)
+                email_sent = True  # Задача поставлена в очередь
 
                 return Response({
                     'status': 'success',
@@ -675,8 +677,8 @@ class ConfirmOrderAPIView(APIView):
                 item.product.quantity -= item.quantity
                 item.product.save(update_fields=['quantity'])
 
-        # Отправляем email уведомления
-        send_order_confirmation_email(cart)
+        # Отправляем email уведомления асинхронно через Celery
+        send_order_confirmation_email_task.delay(cart.id)
 
         # Сериализуем подтвержденный заказ
         order_serializer = OrderSerializer(cart)

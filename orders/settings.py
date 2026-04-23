@@ -195,3 +195,27 @@ else:
     EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
     EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
     DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL')
+
+# Celery settings
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379')
+
+# Сериализация
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_ENABLE_UTC = True
+
+# Таймауты для email задач (SMTP может быть медленным)
+CELERY_TASK_TIME_LIMIT = 5 * 60
+CELERY_TASK_SOFT_TIME_LIMIT = 4 * 60
+
+# Хранение результатов (email не требует долгого хранения)
+CELERY_RESULT_EXPIRES = 1800  # 30 минут
+
+# Настройки для продакшена
+if not DEBUG:
+    # Оптимизация для email задач
+    CELERY_WORKER_PREFETCH_MULTIPLIER = 1   # По одной задаче за раз для email
+    CELERY_WORKER_MAX_TASKS_PER_CHILD = 100  # Перезапуск после 100 email
