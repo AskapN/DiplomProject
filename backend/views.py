@@ -360,7 +360,15 @@ class AddToCartAPIView(APIView):
     def post(self, request, *args, **kwargs):
         """Добавить товар в корзину"""
         product_info_id = request.data.get('product_info_id')
-        quantity = request.data.get('quantity', 1)
+        try:
+            quantity = int(request.data.get('quantity', 1))
+        except (TypeError, ValueError):
+            return Response({'status': 'error', 'message': 'Количество должно быть числом'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if quantity <= 0:
+            return Response({'status': 'error', 'message': 'Количество должно быть больше нуля'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         if not product_info_id:
             return Response({
@@ -421,7 +429,15 @@ class UpdateCartItemAPIView(APIView):
 
     def put(self, request, item_id, *args, **kwargs):
         """Обновить количество товара"""
-        quantity = request.data.get('quantity')
+        try:
+            quantity = int(request.data.get('quantity', 1))
+        except (TypeError, ValueError):
+            return Response({'status': 'error', 'message': 'Количество должно быть числом'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        if quantity <= 0:
+            return Response({'status': 'error', 'message': 'Количество должно быть больше нуля'},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         if not quantity:
             return Response({
