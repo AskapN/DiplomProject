@@ -2,6 +2,7 @@ from django.http import JsonResponse
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
+from django.contrib.sites.shortcuts import get_current_site
 
 from requests import get
 
@@ -10,6 +11,8 @@ from rest_framework.views import APIView
 from rest_framework import status, generics
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
+
+from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiExample, OpenApiParameter
 
 from backend.models import CustomUser, Shop, ProductInfo, ProductImage, Order, OrderItem, Contact
 from backend.serializers import (
@@ -24,8 +27,30 @@ from backend.utils import (
 )
 from backend.tasks import send_verification_email_task, send_order_confirmation_email_task
 from backend.filters import ProductInfoFilter
+from backend.throttling import (
+    RegisterRateThrottle, LoginRateThrottle,
+    VerifyEmailRateThrottle, PartnerUpdateRateThrottle
+)
 
 
+@extend_schema(
+    tags=['partners'],
+    summary='Обновление прайса от поставщика',
+    description='Загружает товары из YAML или JSON файла по URL или из загруженного файла',
+    request={
+        'application/json': {
+            'type': 'object',
+            'properties': {
+                'url': {'type': 'string', 'format': 'uri', 'description': 'URL на файл с товарами'},
+                'file': {'type': 'string', 'format': 'binary', 'description': 'Загруженный файл с товарами'}
+            }
+        }
+    },
+    responses={
+        200: OpenApiResponse(description='Товары успешно загружены'),
+        400: OpenApiResponse(description='Ошибка валидации или парсинга'),
+    }
+)
 class PartnerUpdate(APIView):
     """
     API класс для обновления прайса от поставщика.
@@ -33,6 +58,7 @@ class PartnerUpdate(APIView):
     """
 
     permission_classes = [IsAuthenticated, IsShopOrShopEmployee]
+    throttle_classes = [PartnerUpdateRateThrottle]
 
     def post(self, request, *args, **kwargs):
         """
@@ -117,12 +143,38 @@ class PartnerUpdate(APIView):
             })
 
 
+@extend_schema(
+    tags=['auth'],
+    summary='Вход в систему',
+    description='Аутентификация пользователя по email и паролю, возвращает JWT токены',
+    request={
+        'application/json': {
+            'type': 'object',
+            'properties': {
+                'email': {'type': 'string', 'format': 'email'},
+                'password': {'type': 'string'}
+            },
+            'required': ['email', 'password']
+        }
+    },
+    responses={
+        200: OpenApiResponse(description='Успешная аутентификация'),
+        400: OpenApiResponse(description='Неверные данные'),
+    },
+    examples=[
+        OpenApiExample(
+            'Пример входа',
+            value={'email': 'user@example.com', 'password': 'password123'}
+        )
+    ]
+)
 class LoginView(APIView):
     """
     API view для аутентификации пользователя по email и паролю.
     Возвращает JWT токены при успешной аутентификации.
     """
     permission_classes = []
+    throttle_classes = [LoginRateThrottle]
 
     def post(self, request, *args, **kwargs):
         serializer = LoginSerializer(data=request.data, context={'request': request})
@@ -155,12 +207,35 @@ class LoginView(APIView):
         }, status=status.HTTP_400_BAD_REQUEST)
 
 
+@extend_schema(
+    tags=['auth'],
+    summary='Регистрация нового пользователя',
+    description='Создаёт пользователя с ролью "Покупатель" и отправляет письмо подтверждения email',
+    request={
+        'application/json': {
+            'type': 'object',
+            'properties': {
+                'email': {'type': 'string', 'format': 'email'},
+                'password': {'type': 'string'},
+                'first_name': {'type': 'string'},
+                'last_name': {'type': 'string'},
+                'phone': {'type': 'string'},
+            },
+            'required': ['email', 'password']
+        }
+    },
+    responses={
+        201: OpenApiResponse(description='Пользователь успешно зарегистрирован'),
+        400: OpenApiResponse(description='Ошибка валидации данных'),
+    }
+)
 class RegisterView(APIView):
     """
     API view для регистрации нового пользователя.
     Создает пользователя с ролью "Покупатель" по умолчанию.
     """
     permission_classes = []
+    throttle_classes = [RegisterRateThrottle]
 
     def post(self, request, *args, **kwargs):
         try:
@@ -204,11 +279,26 @@ class RegisterView(APIView):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+@extend_schema(
+    tags=['auth'],
+    summary='Подтверждение email',
+    description='Подтверждает email пользователя по токену из письма',
+    parameters=[
+        OpenApiParameter(name='token', type=str, required=True, description='Токен подтверждения'),
+        OpenApiParameter(name='email', type=str, required=True, description='Email пользователя'),
+    ],
+    responses={
+        200: OpenApiResponse(description='Email подтверждён'),
+        400: OpenApiResponse(description='Неверный токен или параметры'),
+        404: OpenApiResponse(description='Пользователь не найден'),
+    }
+)
 class VerifyEmailView(APIView):
     """
     API view для подтверждения email пользователя.
     """
     permission_classes = []
+    throttle_classes = [VerifyEmailRateThrottle]
 
     def get(self, request, *args, **kwargs):
         token = request.GET.get('token')
@@ -261,6 +351,20 @@ class VerifyEmailView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
 
 
+@extend_schema(
+    tags=['products'],
+    summary='Список товаров',
+    description='Получение списка товаров с фильтрацией, поиском и сортировкой',
+    parameters=[
+        OpenApiParameter(name='name', type=str, description='Поиск по названию'),
+        OpenApiParameter(name='category_id', type=int, description='Фильтр по категории'),
+        OpenApiParameter(name='shop_id', type=int, description='Фильтр по магазину'),
+        OpenApiParameter(name='price_min', type=float, description='Минимальная цена'),
+        OpenApiParameter(name='price_max', type=float, description='Максимальная цена'),
+        OpenApiParameter(name='ordering', type=str, description='Сортировка (id, -id, price, -price и т.д.)'),
+    ],
+    responses={200: ProductInfoSerializer}
+)
 class ProductListAPIView(generics.ListAPIView):
     """
     API для получения списка товаров с возможностью фильтрации и поиска.
@@ -337,6 +441,15 @@ class ProductListAPIView(generics.ListAPIView):
         return Response(response_data)
 
 
+@extend_schema(
+    tags=['cart'],
+    summary='Получение корзины',
+    description='Возвращает текущую корзину пользователя со статусом NEW',
+    responses={
+        200: OrderSerializer,
+        401: OpenApiResponse(description='Требуется аутентификация'),
+    }
+)
 class CartAPIView(APIView):
     """API для просмотра текущей корзины пользователя"""
     permission_classes = [IsAuthenticated]
@@ -355,6 +468,26 @@ class CartAPIView(APIView):
         return Response(serializer.data)
 
 
+@extend_schema(
+    tags=['cart'],
+    summary='Добавление товара в корзину',
+    description='Добавляет товар в корзину или увеличивает количество',
+    request={
+        'application/json': {
+            'type': 'object',
+            'properties': {
+                'product_info_id': {'type': 'integer'},
+                'quantity': {'type': 'integer', 'default': 1}
+            },
+            'required': ['product_info_id']
+        }
+    },
+    responses={
+        200: OpenApiResponse(description='Товар добавлен в корзину'),
+        400: OpenApiResponse(description='Ошибка валидации или недостаточно товара'),
+        404: OpenApiResponse(description='Товар не найден'),
+    }
+)
 class AddToCartAPIView(APIView):
     """API для добавления товара в корзину"""
     permission_classes = [IsAuthenticated]
@@ -425,6 +558,25 @@ class AddToCartAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=['cart'],
+    summary='Обновление количества товара в корзине',
+    description='Обновляет количество товара в корзине',
+    request={
+        'application/json': {
+            'type': 'object',
+            'properties': {
+                'quantity': {'type': 'integer'}
+            },
+            'required': ['quantity']
+        }
+    },
+    responses={
+        200: OpenApiResponse(description='Количество обновлено'),
+        400: OpenApiResponse(description='Ошибка валидации'),
+        404: OpenApiResponse(description='Позиция не найдена'),
+    }
+)
 class UpdateCartItemAPIView(APIView):
     """API для обновления количества товара в корзине"""
     permission_classes = [IsAuthenticated]
@@ -478,6 +630,15 @@ class UpdateCartItemAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=['cart'],
+    summary='Удаление товара из корзины',
+    description='Удаляет товар из корзины',
+    responses={
+        200: OpenApiResponse(description='Товар удалён из корзины'),
+        404: OpenApiResponse(description='Позиция не найдена'),
+    }
+)
 class RemoveFromCartAPIView(APIView):
     """API для удаления товара из корзины"""
     permission_classes = [IsAuthenticated]
@@ -507,6 +668,24 @@ class RemoveFromCartAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    methods=['POST'],
+    tags=['contacts'],
+    summary='Создание контакта',
+    description='Создаёт новый контакт для пользователя',
+    request=ContactSerializer,
+    responses={
+        201: OpenApiResponse(description='Контакт создан'),
+        400: OpenApiResponse(description='Ошибка валидации'),
+    }
+)
+@extend_schema(
+    methods=['GET'],
+    tags=['contacts'],
+    summary='Список контактов',
+    description='Возвращает список контактов текущего пользователя',
+    responses={200: ContactSerializer(many=True)}
+)
 class ContactAPIView(APIView):
     """API для создания и просмотра контактных данных пользователя"""
     permission_classes = [IsAuthenticated]
@@ -538,6 +717,38 @@ class ContactAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    methods=['GET'],
+    tags=['contacts'],
+    summary='Получение контакта',
+    description='Возвращает конкретный контакт пользователя',
+    responses={
+        200: ContactSerializer,
+        404: OpenApiResponse(description='Контакт не найден'),
+    }
+)
+@extend_schema(
+    methods=['PATCH'],
+    tags=['contacts'],
+    summary='Обновление контакта',
+    description='Частичное обновление контакта',
+    request=ContactSerializer(partial=True),
+    responses={
+        200: OpenApiResponse(description='Контакт обновлён'),
+        400: OpenApiResponse(description='Ошибка валидации'),
+        404: OpenApiResponse(description='Контакт не найден'),
+    }
+)
+@extend_schema(
+    methods=['DELETE'],
+    tags=['contacts'],
+    summary='Удаление контакта',
+    description='Удаляет контакт пользователя',
+    responses={
+        200: OpenApiResponse(description='Контакт удалён'),
+        404: OpenApiResponse(description='Контакт не найден'),
+    }
+)
 class ContactDetailView(APIView):
     """API для просмотра, обновления и удаления конкретного контакта"""
     permission_classes = [IsAuthenticated]
@@ -603,6 +814,17 @@ class ContactDetailView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=['orders'],
+    summary='Подтверждение заказа',
+    description='Подтверждает корзину как заказ с контактными данными',
+    request=ConfirmOrderSerializer,
+    responses={
+        200: OpenApiResponse(description='Заказ подтверждён'),
+        400: OpenApiResponse(description='Ошибка валидации или пустая корзина'),
+        404: OpenApiResponse(description='Корзина не найдена'),
+    }
+)
 class ConfirmOrderAPIView(APIView):
     """API для подтверждения заказа с контактными данными"""
     permission_classes = [IsAuthenticated]
@@ -690,6 +912,15 @@ class ConfirmOrderAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=['orders'],
+    summary='Список заказов',
+    description='Возвращает список заказов в зависимости от роли пользователя',
+    responses={
+        200: OrderSerializer(many=True),
+        401: OpenApiResponse(description='Требуется аутентификация'),
+    }
+)
 class OrderListAPIView(APIView):
     """API для просмотра списка заказов текущего пользователя или магазина"""
     permission_classes = [IsAuthenticated]
@@ -741,6 +972,27 @@ class OrderListAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    methods=['GET'],
+    tags=['orders'],
+    summary='Получение заказа',
+    description='Возвращает конкретный заказ с проверкой прав доступа',
+    responses={
+        200: OrderSerializer,
+        404: OpenApiResponse(description='Заказ не найден или нет прав'),
+    }
+)
+@extend_schema(
+    methods=['PATCH'],
+    tags=['orders'],
+    summary='Обновление статуса заказа',
+    description='Обновляет статус заказа (для админа, владельца магазина, сотрудника)',
+    responses={
+        200: OpenApiResponse(description='Статус обновлён'),
+        403: OpenApiResponse(description='Нет прав на изменение'),
+        404: OpenApiResponse(description='Заказ не найден'),
+    }
+)
 class OrderDetailView(APIView):
     """API для просмотра конкретного заказа с проверкой прав доступа"""
     permission_classes = [IsAuthenticated]
@@ -843,6 +1095,38 @@ class OrderDetailView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    methods=['GET'],
+    tags=['products'],
+    summary='Получение изображений товара',
+    description='Возвращает все изображения для указанного товара',
+    responses={
+        200: OpenApiResponse(description='Список изображений'),
+        403: OpenApiResponse(description='Нет доступа к товару'),
+        404: OpenApiResponse(description='Товар не найден'),
+    }
+)
+@extend_schema(
+    methods=['POST'],
+    tags=['products'],
+    summary='Загрузка изображения товара',
+    description='Загружает новое изображение для товара (только для владельца магазина)',
+    request={
+        'multipart/form-data': {
+            'type': 'object',
+            'properties': {
+                'image': {'type': 'string', 'format': 'binary'}
+            },
+            'required': ['image']
+        }
+    },
+    responses={
+        201: OpenApiResponse(description='Изображение загружено'),
+        400: OpenApiResponse(description='Ошибка валидации'),
+        403: OpenApiResponse(description='Нет доступа к товару'),
+        404: OpenApiResponse(description='Товар не найден'),
+    }
+)
 class ProductImageAPIView(APIView):
     """Получение списка и загрузка изображений товара"""
     permission_classes = [IsAuthenticated, IsShopOrShopEmployee]
@@ -895,6 +1179,16 @@ class ProductImageAPIView(APIView):
         return Response({'status': 'success', 'image': result.data}, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(
+    tags=['products'],
+    summary='Удаление изображения товара',
+    description='Удаляет конкретное изображение товара (только для владельца магазина)',
+    responses={
+        200: OpenApiResponse(description='Изображение удалено'),
+        403: OpenApiResponse(description='Нет доступа'),
+        404: OpenApiResponse(description='Изображение не найдено'),
+    }
+)
 class ProductImageDetailAPIView(APIView):
     """Удаление конкретного изображения товара"""
     permission_classes = [IsAuthenticated, IsShopOrShopEmployee]

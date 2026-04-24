@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt.token_blacklist',
     'django_filters',
+    'drf_spectacular',
     'backend',
 ]
 
@@ -79,6 +80,20 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',  # Пагинация
     'PAGE_SIZE': 10,  # Размер страницы
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    # Throttling settings
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle'
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '100/hour',      # Для анонимных пользователей
+        'user': '1000/day',     # Для аутентифицированных
+        'register': '3/hour',   # Регистрация - 3 в час
+        'login': '10/minute',   # Логин - 10 в минуту
+        'verify_email': '5/hour', # Подтверждение email - 5 в час
+        'partner_update': '10/hour', # Загрузка прайса - 10 в час
+    },
 }
 
 ROOT_URLCONF = 'orders.urls'
@@ -219,3 +234,42 @@ if not DEBUG:
     # Оптимизация для email задач
     CELERY_WORKER_PREFETCH_MULTIPLIER = 1   # По одной задаче за раз для email
     CELERY_WORKER_MAX_TASKS_PER_CHILD = 100  # Перезапуск после 100 email
+
+# DRF Spectacular settings
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Orders API',
+    'DESCRIPTION': 'API для управления заказами, товарами и пользователями',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    # Теги для группировки эндпоинтов
+    'TAGS': [
+        {'name': 'auth', 'description': 'Аутентификация и авторизация'},
+        {'name': 'products', 'description': 'Товары и категории'},
+        {'name': 'cart', 'description': 'Корзина'},
+        {'name': 'orders', 'description': 'Заказы'},
+        {'name': 'contacts', 'description': 'Контактные данные'},
+        {'name': 'partners', 'description': 'Партнёры и поставщики'},
+    ],
+    # Компоненты безопасности
+    'SECURITY': [
+        {
+            'Bearer': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'JWT',
+            }
+        }
+    ],
+    # Дополнительные настройки
+    'COMPONENT_SPLIT_REQUEST': True,
+    'ENUM_NAME_OVERRIDES': {
+        'OrderStatus': 'backend.models.Order.StatusChoices',
+    },
+}
+
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': os.getenv('REDIS_URL', 'redis://localhost:6379/1'),
+    }
+}
