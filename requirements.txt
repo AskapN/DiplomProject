@@ -10,3 +10,4 @@ celery==5.6.3
 redis==7.4.0
 drf-spectacular==0.29.0
 social-auth-app-django==5.8.0
+django-baton==5.1.2

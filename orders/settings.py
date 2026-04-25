@@ -39,6 +39,7 @@ ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 # Application definition
 
 INSTALLED_APPS = [
+    'baton',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -52,6 +53,7 @@ INSTALLED_APPS = [
     'django_filters',
     'drf_spectacular',
     'backend',
+    'baton.autodiscover',
 ]
 
 SITE_ID = 1
@@ -309,3 +311,84 @@ SOCIAL_AUTH_GOOGLE_OAUTH2_SECRET = os.getenv('GOOGLE_OAUTH2_SECRET')
 SOCIAL_AUTH_GOOGLE_OAUTH2_SCOPE = ['email', 'profile']
 SOCIAL_AUTH_LOGIN_REDIRECT_URL = '/api/auth/social/token/'
 SOCIAL_AUTH_NEW_USER_REDIRECT_URL = '/api/auth/social/token/'
+
+
+# В конец файла
+BATON = {
+    'SITE_TITLE': 'Orders Admin',
+    'SITE_HEADER': 'Orders Administration',
+    'INDEX_TITLE': 'Панель управления',
+    'COPYRIGHT': 'Orders © 2026',
+    'CONFIRM_UNSAVED_CHANGES': True,
+    'SHOW_MULTIPART_UPLOADING': True,
+    'ENABLE_IMAGES_PREVIEW': True,
+    'CHANGELIST_FILTERS_IN_MODAL': True,
+    'CHANGELIST_FILTERS_FORM': True,
+    'MESSAGES_TOASTS': True,
+    'GRAVATAR_ENABLED': True,
+    'GRAVATAR_DEFAULT_IMG': 'retro',
+    'MENU': (
+        {
+            'type': 'title',
+            'label': 'Пользователи',
+            'apps': ('backend',),
+        },
+        {
+            'type': 'app',
+            'name': 'backend',
+            'label': 'Пользователи и магазины',
+            'models': (
+                {'name': 'customuser', 'label': 'Пользователи'},
+                {'name': 'userrole', 'label': 'Роли'},
+                {'name': 'shop', 'label': 'Магазины'},
+                {'name': 'shopemployee', 'label': 'Сотрудники'},
+            ),
+        },
+        {
+            'type': 'title',
+            'label': 'Каталог товаров',
+            'apps': ('backend',),
+        },
+        {
+            'type': 'app',
+            'name': 'backend',
+            'label': 'Каталог',
+            'models': (
+                {'name': 'category', 'label': 'Категории'},
+                {'name': 'product', 'label': 'Товары'},
+                {'name': 'productinfo', 'label': 'Товары в магазинах'},
+                {'name': 'productimage', 'label': 'Изображения'},
+                {'name': 'parameter', 'label': 'Параметры'},
+                {'name': 'productparameter', 'label': 'Значения параметров'},
+            ),
+        },
+        {
+            'type': 'title',
+            'label': 'Заказы и контакты',
+            'apps': ('backend',),
+        },
+        {
+            'type': 'app',
+            'name': 'backend',
+            'label': 'Заказы',
+            'models': (
+                {'name': 'order', 'label': 'Заказы'},
+                {'name': 'orderitem', 'label': 'Позиции заказов'},
+                {'name': 'contact', 'label': 'Контакты'},
+            ),
+        },
+        {
+            'type': 'title',
+            'label': 'Система',
+            'apps': ('auth', 'social_django'),
+        },
+        {
+            'type': 'app',
+            'name': 'auth',
+            'label': 'Группы доступа',
+            'models': (
+                {'name': 'group', 'label': 'Группы'},
+            ),
+        },
+    ),
+}
