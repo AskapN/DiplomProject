@@ -3,12 +3,14 @@ from backend.views import (
     PartnerUpdate, LoginView, RegisterView, VerifyEmailView, ProductListAPIView,
     CartAPIView, AddToCartAPIView, UpdateCartItemAPIView, RemoveFromCartAPIView,
     ContactAPIView, ContactDetailView, ConfirmOrderAPIView, OrderListAPIView, OrderDetailView,
-    ProductImageAPIView, ProductImageDetailAPIView
+    ProductImageAPIView, ProductImageDetailAPIView, SocialAuthView, SocialAuthTokenView
 )
 
 urlpatterns = [
     path('partner/update/', PartnerUpdate.as_view(), name='partner-update'),
     path('login/', LoginView.as_view(), name='login'),
+    path('auth/social/token/', SocialAuthTokenView.as_view(), name='social-auth-token'),
+    path('auth/social/<str:provider>/', SocialAuthView.as_view(), name='social-auth'),
     path('register/', RegisterView.as_view(), name='register'),
     path('verify-email/', VerifyEmailView.as_view(), name='verify-email'),
     path('products/', ProductListAPIView.as_view(), name='product-list'),

@@ -3,6 +3,9 @@ from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.contrib.sites.shortcuts import get_current_site
+from django.shortcuts import redirect
+from urllib.parse import urlencode
+from django.conf import settings
 
 from requests import get
 
@@ -205,6 +208,38 @@ class LoginView(APIView):
             'status': 'error',
             'errors': serializer.errors
         }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SocialAuthView(APIView):
+    """Инициирует социальную авторизацию — редирект на провайдера"""
+    permission_classes = []
+
+    def get(self, request, provider):
+        auth_url = f"/auth/login/{provider}/"
+        return redirect(auth_url)
+
+
+class SocialAuthTokenView(APIView):
+    """Возвращает JWT токены после завершения социальной авторизации"""
+    permission_classes = []
+
+    def get(self, request):
+        access_token = request.session.pop('social_auth_access_token', None)
+        refresh_token = request.session.pop('social_auth_refresh_token', None)
+
+        if not access_token:
+            return Response({
+                'status': 'error',
+                'message': 'Токены не найдены. Выполните авторизацию через социальную сеть.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'status': 'success',
+            'tokens': {
+                'access': access_token,
+                'refresh': refresh_token,
+            }
+        }, status=status.HTTP_200_OK)
 
 
 @extend_schema(
