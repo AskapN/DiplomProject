@@ -1,7 +1,11 @@
 from celery import shared_task
+
 from django.core.mail import send_mail
 from django.conf import settings
 from django.contrib.sites.shortcuts import get_current_site
+
+from imagekit.cachefiles import ImageCacheFile
+
 import logging
 
 from backend.models import CustomUser, Order
@@ -178,4 +182,64 @@ ID контакта: {order.contact.id if order.contact else 'Не указан'
         return {'status': 'error', 'message': 'Order not found'}
     except Exception as e:
         logger.error(f"Ошибка отправки email для заказа {order_id}: {e}")
+        raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
+
+
+def _generate_thumbnails(instance, spec_field_names):
+    """
+    Вспомогательная функция: генерирует кэшированные файлы для списка ImageSpecField.
+
+    Args:
+        instance: Экземпляр модели
+        spec_field_names: Список имён ImageSpecField на модели
+    """
+    for field_name in spec_field_names:
+        try:
+            spec = getattr(instance, field_name)
+            if spec:
+                cache_file = ImageCacheFile(spec)
+                cache_file.generate()
+                logger.info(f"Generated thumbnail: {field_name} for {instance}")
+        except Exception as e:
+            logger.error(f"Error generating thumbnail '{field_name}': {e}")
+            raise
+
+
+@shared_task(bind=True, max_retries=3)
+def generate_all_thumbnails_for_product(self, product_image_id):
+    """
+    Генерация всех миниатюр для изображения товара.
+
+    Args:
+        product_image_id: ID объекта ProductImage
+    """
+    from backend.models import ProductImage
+
+    try:
+        product_image = ProductImage.objects.get(id=product_image_id)
+        _generate_thumbnails(product_image, ['image_small', 'image_medium', 'image_large'])
+    except ProductImage.DoesNotExist:
+        logger.error(f"ProductImage with id {product_image_id} not found")
+    except Exception as e:
+        logger.error(f"Error generating thumbnails for ProductImage {product_image_id}: {e}")
+        raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
+
+
+@shared_task(bind=True, max_retries=3)
+def generate_all_thumbnails_for_user(self, user_id):
+    """
+    Генерация всех миниатюр для аватара пользователя.
+
+    Args:
+        user_id: ID объекта CustomUser
+    """
+    from backend.models import CustomUser
+
+    try:
+        user = CustomUser.objects.get(id=user_id)
+        _generate_thumbnails(user, ['avatar_thumbnail', 'avatar_medium'])
+    except CustomUser.DoesNotExist:
+        logger.error(f"CustomUser with id {user_id} not found")
+    except Exception as e:
+        logger.error(f"Error generating thumbnails for CustomUser {user_id}: {e}")
         raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))

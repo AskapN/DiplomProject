@@ -15,6 +15,11 @@ from datetime import timedelta
 
 import os
 
+import sentry_sdk
+from sentry_sdk.integrations.django import DjangoIntegration
+from sentry_sdk.integrations.celery import CeleryIntegration
+from sentry_sdk.integrations.redis import RedisIntegration
+
 import django_filters
 from dotenv import load_dotenv
 
@@ -53,6 +58,7 @@ INSTALLED_APPS = [
     'django_filters',
     'drf_spectacular',
     'backend',
+    'imagekit',
     'baton.autodiscover',
 ]
 
@@ -392,3 +398,24 @@ BATON = {
         },
     ),
 }
+
+# Настройки для django-imagekit
+IMAGEKIT_CACHEFILE_BACKEND = 'imagekit.cachefiles.backends.Default'
+IMAGEKIT_DEFAULT_CACHEFILE_STRATEGY = 'imagekit.cachefiles.strategies.Optimistic'
+IMAGEKIT_SPEC_CACHEFILE_NAMER = 'imagekit.cachefiles.namers.source_name_as_path'
+
+# Sentry (self-hosted)
+SENTRY_DSN = os.getenv('SENTRY_DSN')
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            DjangoIntegration(),
+            CeleryIntegration(),
+            RedisIntegration(),
+        ],
+        traces_sample_rate=1.0 if DEBUG else 0.2,
+        send_default_pii=True,
+        environment='development' if DEBUG else 'production',
+    )

@@ -1,0 +1,40 @@
+services:
+  redis:
+    image: redis:7-alpine
+    network_mode: host
+    restart: unless-stopped
+
+  web:
+    image: glitchtip/glitchtip
+    network_mode: host
+    depends_on:
+      - redis
+    environment:
+      DATABASE_URL: postgresql://glitchtip:glitchtip_secret@localhost/glitchtip
+      REDIS_URL: redis://localhost:6379
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-change-me-in-production}
+      EMAIL_URL: consolemail://
+      GLITCHTIP_DOMAIN: http://localhost:8000
+      DEFAULT_FROM_EMAIL: glitchtip@localhost
+      PORT: 8000
+    restart: unless-stopped
+
+  worker:
+    image: glitchtip/glitchtip
+    network_mode: host
+    command: ./bin/run-celery-with-beat.sh
+    depends_on:
+      - redis
+    environment:
+      DATABASE_URL: postgresql://glitchtip:glitchtip_secret@localhost/glitchtip
+      REDIS_URL: redis://localhost:6379
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-change-me-in-production}
+    restart: unless-stopped
+
+  migrate:
+    image: glitchtip/glitchtip
+    network_mode: host
+    command: ./manage.py migrate
+    environment:
+      DATABASE_URL: postgresql://glitchtip:glitchtip_secret@localhost/glitchtip
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-change-me-in-production}

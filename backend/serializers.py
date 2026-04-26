@@ -111,16 +111,35 @@ class CategorySerializer(serializers.ModelSerializer):
 
 class ProductImageSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
+    image_small_url = serializers.SerializerMethodField()
+    image_medium_url = serializers.SerializerMethodField()
+    image_large_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ProductImage
-        fields = ['id', 'image_url', 'created_at']
+        fields = ['id', 'image_url', 'image_small_url', 'image_medium_url', 'image_large_url', 'created_at']
+
+    def _build_url(self, spec_or_file):
+        request = self.context.get('request')
+        try:
+            url = spec_or_file.url
+            return request.build_absolute_uri(url) if request else url
+        except Exception:
+            return None
 
     def get_image_url(self, obj):
-        request = self.context.get('request')
-        if obj.image and request:
-            return request.build_absolute_uri(obj.image.url)
+        if obj.image:
+            return self._build_url(obj.image)
         return None
+
+    def get_image_small_url(self, obj):
+        return self._build_url(obj.image_small) if obj.image else None
+
+    def get_image_medium_url(self, obj):
+        return self._build_url(obj.image_medium) if obj.image else None
+
+    def get_image_large_url(self, obj):
+        return self._build_url(obj.image_large) if obj.image else None
 
 
 class ProductInfoSerializer(serializers.ModelSerializer):
@@ -233,3 +252,31 @@ class ConfirmOrderSerializer(serializers.Serializer):
                     raise serializers.ValidationError(f'Поле {field} обязательно при создании нового контакта')
 
         return attrs
+
+
+class UserSerializer(serializers.ModelSerializer):
+    """Сериализатор пользователя с миниатюрами аватара."""
+
+    avatar_thumbnail_url = serializers.SerializerMethodField()
+    avatar_medium_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomUser
+        fields = [
+            'id', 'username', 'email', 'avatar',
+            'avatar_thumbnail_url', 'avatar_medium_url'
+        ]
+
+    def _build_url(self, spec):
+        request = self.context.get('request')
+        try:
+            url = spec.url
+            return request.build_absolute_uri(url) if request else url
+        except Exception:
+            return None
+
+    def get_avatar_thumbnail_url(self, obj):
+        return self._build_url(obj.avatar_thumbnail) if obj.avatar else None
+
+    def get_avatar_medium_url(self, obj):
+        return self._build_url(obj.avatar_medium) if obj.avatar else None

@@ -1,0 +1,618 @@
+{
+  "info": {
+    "name": "Orders API",
+    "description": "REST API для автоматизации закупок. Базовый URL: {{base_url}}/api/\n\nПеред началом работы:\n1. Импортируйте окружение postman_environment.json\n2. Зарегистрируйтесь или войдите — токен сохранится автоматически\n3. Подтвердите email (ссылка придёт в консоль сервера при DEBUG=True)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8000", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1. Аутентификация",
+      "item": [
+        {
+          "name": "Регистрация",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/api/register/", "host": ["{{base_url}}"], "path": ["api", "register", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"first_name\": \"Иван\",\n    \"last_name\": \"Иванов\",\n    \"email\": \"ivan@example.com\",\n    \"password\": \"Password123\",\n    \"password_confirm\": \"Password123\",\n    \"phone\": \"+79001234567\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Регистрация успешна', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('success');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Подтверждение email",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/verify-email/?token={{email_token}}&email=ivan@example.com",
+              "host": ["{{base_url}}"],
+              "path": ["api", "verify-email", ""],
+              "query": [
+                { "key": "token", "value": "{{email_token}}" },
+                { "key": "email", "value": "ivan@example.com" }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Email подтверждён', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    if (json.tokens) {",
+                  "        pm.collectionVariables.set('access_token', json.tokens.access);",
+                  "        pm.collectionVariables.set('refresh_token', json.tokens.refresh);",
+                  "        console.log('Токен сохранён из verify-email');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Вход (Login)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{base_url}}/api/login/", "host": ["{{base_url}}"], "path": ["api", "login", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"email\": \"ivan@example.com\",\n    \"password\": \"Password123\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Вход выполнен', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('success');",
+                  "    pm.collectionVariables.set('access_token', json.tokens.access);",
+                  "    pm.collectionVariables.set('refresh_token', json.tokens.refresh);",
+                  "    console.log('access_token сохранён:', json.tokens.access.substring(0, 30) + '...');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Товары",
+      "item": [
+        {
+          "name": "Список товаров",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/products/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Статус 200', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Содержит results', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('results');",
+                  "    if (json.results.length > 0) {",
+                  "        var first = json.results[0];",
+                  "        pm.collectionVariables.set('product_info_id', first.id);",
+                  "        console.log('product_info_id сохранён:', first.id);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Список товаров — с фильтрами",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/products/?in_stock=true&ordering=-price&price_min=100",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products", ""],
+              "query": [
+                { "key": "in_stock", "value": "true" },
+                { "key": "ordering", "value": "-price" },
+                { "key": "price_min", "value": "100" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Список товаров — поиск по названию",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/products/?name=смартфон",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products", ""],
+              "query": [{ "key": "name", "value": "смартфон" }]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Изображения товаров",
+      "item": [
+        {
+          "name": "Список изображений товара",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/products/{{product_info_id}}/images/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products", "{{product_info_id}}", "images", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Статус 200', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "if (json.images && json.images.length > 0) {",
+                  "    pm.collectionVariables.set('image_id', json.images[0].id);",
+                  "    console.log('image_id сохранён:', json.images[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Загрузить изображение товара",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/products/{{product_info_id}}/images/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products", "{{product_info_id}}", "images", ""]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": [],
+                  "description": "Выберите файл изображения (JPG, PNG, WEBP)"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Изображение загружено', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('success');",
+                  "    pm.collectionVariables.set('image_id', json.image.id);",
+                  "    console.log('image_id сохранён:', json.image.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Удалить изображение товара",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/products/{{product_info_id}}/images/{{image_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "products", "{{product_info_id}}", "images", "{{image_id}}", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Изображение удалено', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('success');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Корзина",
+      "item": [
+        {
+          "name": "Просмотр корзины",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": { "raw": "{{base_url}}/api/cart/", "host": ["{{base_url}}"], "path": ["api", "cart", ""] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Статус 200', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "if (json.items && json.items.length > 0) {",
+                  "    pm.collectionVariables.set('cart_item_id', json.items[0].id);",
+                  "    console.log('cart_item_id сохранён:', json.items[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Добавить товар в корзину",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/cart/add/", "host": ["{{base_url}}"], "path": ["api", "cart", "add", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"product_info_id\": {{product_info_id}},\n    \"quantity\": 2\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Товар добавлен', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('success');",
+                  "    if (json.cart && json.cart.items && json.cart.items.length > 0) {",
+                  "        pm.collectionVariables.set('cart_item_id', json.cart.items[0].id);",
+                  "        console.log('cart_item_id сохранён:', json.cart.items[0].id);",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Обновить количество в корзине",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/cart/update/{{cart_item_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "cart", "update", "{{cart_item_id}}", ""]
+            },
+            "body": { "mode": "raw", "raw": "{\n    \"quantity\": 3\n}" }
+          }
+        },
+        {
+          "name": "Удалить позицию из корзины",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/cart/remove/{{cart_item_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "cart", "remove", "{{cart_item_id}}", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Контакты",
+      "item": [
+        {
+          "name": "Создать контакт",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": { "raw": "{{base_url}}/api/contact/", "host": ["{{base_url}}"], "path": ["api", "contact", ""] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"last_name\": \"Иванов\",\n    \"first_name\": \"Иван\",\n    \"patronymic\": \"Иванович\",\n    \"email\": \"ivan@example.com\",\n    \"phone\": \"+79001234567\",\n    \"city\": \"Москва\",\n    \"street\": \"Ленина\",\n    \"house\": \"10\",\n    \"building\": \"1\",\n    \"structure\": \"\",\n    \"apartment\": \"42\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Контакт создан', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('success');",
+                  "    pm.collectionVariables.set('contact_id', json.contact.id);",
+                  "    console.log('contact_id сохранён:', json.contact.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Список контактов",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": { "raw": "{{base_url}}/api/contact/", "host": ["{{base_url}}"], "path": ["api", "contact", ""] }
+          }
+        },
+        {
+          "name": "Просмотр контакта",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/contact/{{contact_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "contact", "{{contact_id}}", ""]
+            }
+          }
+        },
+        {
+          "name": "Обновить контакт (PATCH)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/contact/{{contact_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "contact", "{{contact_id}}", ""]
+            },
+            "body": { "mode": "raw", "raw": "{\n    \"city\": \"Санкт-Петербург\",\n    \"apartment\": \"100\"\n}" }
+          }
+        },
+        {
+          "name": "Удалить контакт",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/contact/{{contact_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "contact", "{{contact_id}}", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Заказы",
+      "item": [
+        {
+          "name": "Подтвердить заказ — новый контакт",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/order/confirm/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "order", "confirm", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"last_name\": \"Иванов\",\n    \"first_name\": \"Иван\",\n    \"patronymic\": \"Иванович\",\n    \"email\": \"ivan@example.com\",\n    \"phone\": \"+79001234567\",\n    \"city\": \"Москва\",\n    \"street\": \"Ленина\",\n    \"house\": \"10\",\n    \"apartment\": \"42\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Заказ подтверждён', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('success');",
+                  "    pm.collectionVariables.set('order_id', json.order.id);",
+                  "    console.log('order_id сохранён:', json.order.id);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Подтвердить заказ — существующий контакт",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/order/confirm/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "order", "confirm", ""]
+            },
+            "body": { "mode": "raw", "raw": "{\n    \"contact_id\": {{contact_id}}\n}" }
+          }
+        },
+        {
+          "name": "Список заказов",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": { "raw": "{{base_url}}/api/orders/", "host": ["{{base_url}}"], "path": ["api", "orders", ""] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Статус 200', function () { pm.response.to.have.status(200); });",
+                  "var json = pm.response.json();",
+                  "if (json.orders && json.orders.length > 0) {",
+                  "    pm.collectionVariables.set('order_id', json.orders[0].id);",
+                  "    console.log('order_id сохранён:', json.orders[0].id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Просмотр заказа",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/orders/{{order_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders", "{{order_id}}", ""]
+            }
+          }
+        },
+        {
+          "name": "Обновить статус заказа (PATCH)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/orders/{{order_id}}/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders", "{{order_id}}", ""]
+            },
+            "body": { "mode": "raw", "raw": "{\n    \"status\": \"shipped\"\n}" },
+            "description": "Доступные статусы: new, confirmed, shipped, delivered, cancelled\nПрава: admin, shop, shop_employee"
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Партнёр — импорт прайса",
+      "item": [
+        {
+          "name": "Загрузить прайс из файла",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{access_token}}" }],
+            "url": {
+              "raw": "{{base_url}}/api/partner/update/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "partner", "update", ""]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Выберите YAML или JSON файл с товарами"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Прайс загружен', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.Status).to.be.true;",
+                  "    console.log('Загружено товаров:', json.Products);",
+                  "    console.log('Загружено категорий:', json.Categories);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Загрузить прайс по URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/partner/update/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "partner", "update", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"url\": \"https://example.com/shop1.yaml\"\n}"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    { "key": "access_token", "value": "", "type": "string" },
+    { "key": "refresh_token", "value": "", "type": "string" },
+    { "key": "product_info_id", "value": "1", "type": "string" },
+    { "key": "image_id", "value": "1", "type": "string" },
+    { "key": "cart_item_id", "value": "1", "type": "string" },
+    { "key": "contact_id", "value": "1", "type": "string" },
+    { "key": "order_id", "value": "1", "type": "string" },
+    { "key": "email_token", "value": "", "type": "string" }
+  ]
+}

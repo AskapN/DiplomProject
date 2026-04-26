@@ -1,6 +1,11 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.core.validators import MinValueValidator, RegexValidator
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+
+from imagekit.models import ProcessedImageField, ImageSpecField
+from imagekit.processors import ResizeToFill, ResizeToFit
 
 import secrets
 
@@ -60,7 +65,32 @@ class CustomUser(AbstractUser):
             )
         ]
     )
-    avatar = models.ImageField(upload_to='avatars/', verbose_name='Аватар', null=True, blank=True)
+    # Оригинальный аватар
+    avatar = ProcessedImageField(
+        upload_to='avatars/',
+        processors=[ResizeToFit(400, 400)],
+        format='JPEG',
+        options={'quality': 90},
+        verbose_name='Аватар',
+        null=True,
+        blank=True
+    )
+
+    # Миниатюра аватара (100x100)
+    avatar_thumbnail = ImageSpecField(
+        source='avatar',
+        processors=[ResizeToFill(100, 100)],
+        format='JPEG',
+        options={'quality': 85}
+    )
+
+    # Средний размер аватара (200x200)
+    avatar_medium = ImageSpecField(
+        source='avatar',
+        processors=[ResizeToFill(200, 200)],
+        format='JPEG',
+        options={'quality': 90}
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создано')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='Обновлено')
     role = models.ForeignKey(
@@ -290,24 +320,57 @@ class ProductInfo(models.Model):
 
 
 class ProductImage(models.Model):
-    """Модель изображения товара в магазине.
+    """Модель изображения товара в магазине с поддержкой миниатюр.
 
     Один товар (ProductInfo) может иметь несколько изображений.
     Файлы сохраняются в директорию media/products/.
 
     Поля:
     - product_info: Ссылка на товар в магазине (ForeignKey на ProductInfo)
-    - image: Файл изображения (ImageField, upload_to='products/')
+    - image: Файл изображения (ProcessedImageField с авто-обработкой)
+    - image_small: Миниатюра 150x150
+    - image_medium: Миниатюра 300x300
+    - image_large: Миниатюра 800x800
     - created_at: Дата и время добавления (автоматически при создании)
-
-    Связи:
-    - Нет прямых обратных связей
     """
     product_info = models.ForeignKey(
         ProductInfo, on_delete=models.CASCADE,
         related_name='images', verbose_name='Товар'
     )
-    image = models.ImageField(upload_to='products/', verbose_name='Изображение')
+
+    # Оригинальное изображение с авто-ресайзом до макс. 1200x1200
+    image = ProcessedImageField(
+        upload_to='products/',
+        processors=[ResizeToFit(1200, 1200)],
+        format='JPEG',
+        options={'quality': 95},
+        verbose_name='Изображение'
+    )
+
+    # Миниатюра для списка товаров (150x150)
+    image_small = ImageSpecField(
+        source='image',
+        processors=[ResizeToFill(150, 150)],
+        format='JPEG',
+        options={'quality': 80}
+    )
+
+    # Средний размер для карточки товара (300x300)
+    image_medium = ImageSpecField(
+        source='image',
+        processors=[ResizeToFill(300, 300)],
+        format='JPEG',
+        options={'quality': 85}
+    )
+
+    # Большой размер для галереи (800x800)
+    image_large = ImageSpecField(
+        source='image',
+        processors=[ResizeToFit(800, 800)],
+        format='JPEG',
+        options={'quality': 90}
+    )
+
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата добавления')
 
     class Meta:
@@ -512,3 +575,21 @@ class OrderItem(models.Model):
     def get_price(self):
         """Возвращает стоимость позиции (цена × количество)"""
         return self.product.price * self.quantity
+
+
+@receiver(post_save, sender=ProductImage)
+def generate_product_image_thumbnails(sender, instance, created, **kwargs):
+    """Автоматическая генерация миниатюр после сохранения изображения товара."""
+    if instance.image:
+        from backend.tasks import generate_all_thumbnails_for_product
+        generate_all_thumbnails_for_product.delay(instance.id)
+
+
+@receiver(post_save, sender=CustomUser)
+def generate_user_avatar_thumbnails(sender, instance, created, **kwargs):
+    """Автоматическая генерация миниатюр после сохранения аватара пользователя."""
+    update_fields = kwargs.get('update_fields')
+    avatar_changed = update_fields is None or 'avatar' in (update_fields or [])
+    if instance.avatar and avatar_changed:
+        from backend.tasks import generate_all_thumbnails_for_user
+        generate_all_thumbnails_for_user.delay(instance.id)

@@ -11,3 +11,5 @@ redis==7.4.0
 drf-spectacular==0.29.0
 social-auth-app-django==5.8.0
 django-baton==5.1.2
+django-imagekit==6.1.0
+sentry-sdk[django]==2.58.0
