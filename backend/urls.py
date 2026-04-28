@@ -3,7 +3,8 @@ from backend.views import (
     PartnerUpdate, LoginView, RegisterView, VerifyEmailView, ProductListAPIView,
     CartAPIView, AddToCartAPIView, UpdateCartItemAPIView, RemoveFromCartAPIView,
     ContactAPIView, ContactDetailView, ConfirmOrderAPIView, OrderListAPIView, OrderDetailView,
-    ProductImageAPIView, ProductImageDetailAPIView, SocialAuthView, SocialAuthTokenView
+    ProductImageAPIView, ProductImageDetailAPIView, SocialAuthView, SocialAuthTokenView,
+    SentryTestView
 )
 
 urlpatterns = [
@@ -29,4 +30,5 @@ urlpatterns = [
         ProductImageDetailAPIView.as_view(),
         name='product-image-detail'
     ),
+    path('sentry-test/', SentryTestView.as_view(), name='sentry-test'),
 ]

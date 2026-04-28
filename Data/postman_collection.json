@@ -1,11 +1,20 @@
 {
   "info": {
+    "_postman_id": "orders-api-v2",
     "name": "Orders API",
-    "description": "REST API для автоматизации закупок. Базовый URL: {{base_url}}/api/\n\nПеред началом работы:\n1. Импортируйте окружение postman_environment.json\n2. Зарегистрируйтесь или войдите — токен сохранится автоматически\n3. Подтвердите email (ссылка придёт в консоль сервера при DEBUG=True)",
+    "description": "REST API для автоматизации закупок.\n\nБазовый URL: {{base_url}}/api/\n\n**Быстрый старт:**\n1. Выполните «Регистрация»\n2. Скопируйте токен из консоли сервера в переменную `email_token`\n3. Выполните «Подтверждение email» — `access_token` сохранится автоматически\n4. Все последующие запросы используют `access_token` из переменных коллекции\n\n**Для партнёров:** войдите под аккаунтом с ролью `shop`, загрузите прайс через «7. Партнёр».\n\n**Социальная авторизация:** перейдите по URL «Редирект на провайдера», завершите OAuth в браузере, затем выполните «Получить JWT после OAuth».",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
-    { "key": "base_url", "value": "http://127.0.0.1:8000", "type": "string" }
+    { "key": "base_url",        "value": "http://127.0.0.1:8000", "type": "string" },
+    { "key": "access_token",    "value": "",  "type": "string" },
+    { "key": "refresh_token",   "value": "",  "type": "string" },
+    { "key": "email_token",     "value": "",  "type": "string" },
+    { "key": "product_info_id", "value": "1", "type": "string" },
+    { "key": "image_id",        "value": "1", "type": "string" },
+    { "key": "cart_item_id",    "value": "1", "type": "string" },
+    { "key": "contact_id",      "value": "1", "type": "string" },
+    { "key": "order_id",        "value": "1", "type": "string" }
   ],
   "item": [
     {
@@ -93,6 +102,82 @@
                   "    pm.collectionVariables.set('access_token', json.tokens.access);",
                   "    pm.collectionVariables.set('refresh_token', json.tokens.refresh);",
                   "    console.log('access_token сохранён:', json.tokens.access.substring(0, 30) + '...');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Социальная авторизация — редирект к провайдеру",
+          "request": {
+            "method": "GET",
+            "description": "Открыть в браузере. После OAuth провайдер редиректит обратно на сервер. Поддерживаемые провайдеры: google-oauth2, vk-oauth2.",
+            "url": {
+              "raw": "{{base_url}}/auth/login/google-oauth2/",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "login", "google-oauth2", ""]
+            }
+          }
+        },
+        {
+          "name": "Социальная авторизация — получить JWT (токен провайдера)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "description": "Обменивает access_token провайдера (Google / VK) на JWT токены приложения.",
+            "url": {
+              "raw": "{{base_url}}/api/auth/social/token/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "social", "token", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"provider\": \"google-oauth2\",\n    \"access_token\": \"<OAUTH_ACCESS_TOKEN_FROM_PROVIDER>\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('JWT получен через OAuth', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    var json = pm.response.json();",
+                  "    pm.collectionVariables.set('access_token', json.access);",
+                  "    pm.collectionVariables.set('refresh_token', json.refresh);",
+                  "    console.log('access_token сохранён:', json.access.substring(0, 30) + '...');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Социальная авторизация — OAuth code (callback)",
+          "request": {
+            "method": "GET",
+            "description": "Эндпоинт callback. Вызывается провайдером автоматически; вручную используется для отладки.",
+            "url": {
+              "raw": "{{base_url}}/api/auth/social/google-oauth2/?code=<CODE>",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "social", "google-oauth2", ""],
+              "query": [{ "key": "code", "value": "<CODE>" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Статус 200 или 400', function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 400]);",
+                  "    var json = pm.response.json();",
+                  "    if (json.access) {",
+                  "        pm.collectionVariables.set('access_token', json.access);",
+                  "        pm.collectionVariables.set('refresh_token', json.refresh);",
+                  "        console.log('access_token сохранён из OAuth callback');",
+                  "    }",
                   "});"
                 ]
               }
@@ -603,16 +688,35 @@
           }
         }
       ]
+    },
+    {
+      "name": "8. Утилиты",
+      "item": [
+        {
+          "name": "Тест Sentry / GlitchTip (только DEBUG=True)",
+          "request": {
+            "method": "GET",
+            "description": "Намеренно вызывает исключение для проверки интеграции с Sentry/GlitchTip.\n- DEBUG=True  → 500 (исключение долетает до Sentry)\n- DEBUG=False → 403 Forbidden",
+            "url": {
+              "raw": "{{base_url}}/api/sentry-test/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "sentry-test", ""]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('DEBUG=False → 403', function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
-  ],
-  "variable": [
-    { "key": "access_token", "value": "", "type": "string" },
-    { "key": "refresh_token", "value": "", "type": "string" },
-    { "key": "product_info_id", "value": "1", "type": "string" },
-    { "key": "image_id", "value": "1", "type": "string" },
-    { "key": "cart_item_id", "value": "1", "type": "string" },
-    { "key": "contact_id", "value": "1", "type": "string" },
-    { "key": "order_id", "value": "1", "type": "string" },
-    { "key": "email_token", "value": "", "type": "string" }
   ]
 }

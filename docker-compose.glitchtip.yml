@@ -14,9 +14,9 @@ services:
       REDIS_URL: redis://localhost:6379
       SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-change-me-in-production}
       EMAIL_URL: consolemail://
-      GLITCHTIP_DOMAIN: http://localhost:8000
+      GLITCHTIP_DOMAIN: http://localhost:8001
       DEFAULT_FROM_EMAIL: glitchtip@localhost
-      PORT: 8000
+      PORT: 8001
     restart: unless-stopped
 
   worker:

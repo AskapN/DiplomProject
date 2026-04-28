@@ -9,7 +9,7 @@ from django.conf import settings
 
 from requests import get
 
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
 from rest_framework import status, generics
 from rest_framework.response import Response
@@ -210,6 +210,24 @@ class LoginView(APIView):
         }, status=status.HTTP_400_BAD_REQUEST)
 
 
+@extend_schema(
+    tags=['auth'],
+    summary='Редирект на OAuth-провайдера',
+    description='Перенаправляет браузер на страницу авторизации провайдера. '
+                'Поддерживаемые провайдеры: `google-oauth2`, `vk-oauth2`.',
+    parameters=[
+        OpenApiParameter(
+            name='provider',
+            type=str,
+            location=OpenApiParameter.PATH,
+            description='Идентификатор провайдера (google-oauth2, vk-oauth2)',
+            required=True,
+        ),
+    ],
+    responses={
+        302: OpenApiResponse(description='Редирект на страницу провайдера'),
+    }
+)
 class SocialAuthView(APIView):
     """Инициирует социальную авторизацию — редирект на провайдера"""
     permission_classes = []
@@ -219,6 +237,16 @@ class SocialAuthView(APIView):
         return redirect(auth_url)
 
 
+@extend_schema(
+    tags=['auth'],
+    summary='Получить JWT после OAuth',
+    description='Возвращает JWT токены из сессии после успешного завершения OAuth-флоу. '
+                'Вызывать сразу после редиректа с провайдера.',
+    responses={
+        200: OpenApiResponse(description='Токены успешно выданы (access + refresh)'),
+        400: OpenApiResponse(description='Токены не найдены — OAuth-флоу не завершён'),
+    }
+)
 class SocialAuthTokenView(APIView):
     """Возвращает JWT токены после завершения социальной авторизации"""
     permission_classes = []
@@ -417,7 +445,8 @@ class ProductListAPIView(generics.ListAPIView):
     queryset = ProductInfo.objects.select_related(
         'product', 'shop', 'product__category'
     ).prefetch_related(
-        'product_parameters__parameter'
+        'product_parameters__parameter',
+        'images',
     ).all()
 
     serializer_class = ProductInfoSerializer
@@ -453,23 +482,27 @@ class ProductListAPIView(generics.ListAPIView):
             serializer = self.get_serializer(page, many=True)
             return self.get_paginated_response(serializer.data)
 
+        price_stats = queryset.aggregate(
+            price_min=models.Min('price'),
+            price_max=models.Max('price'),
+        )
         serializer = self.get_serializer(queryset, many=True)
 
         # Добавляем статистику
         response_data = {
-            'count': queryset.count(),
+            'count': len(serializer.data),
             'results': serializer.data,
             'filters_available': {
                 'price_range': {
-                    'min': queryset.aggregate(models.Min('price'))['price__min'],
-                    'max': queryset.aggregate(models.Max('price'))['price__max']
+                    'min': price_stats['price_min'],
+                    'max': price_stats['price_max'],
                 },
                 'categories': list(queryset.values_list(
                     'product__category__name', flat=True
                 ).distinct()),
                 'shops': list(queryset.values_list(
                     'shop__name', flat=True
-                ).distinct())
+                ).distinct()),
             }
         }
 
@@ -1247,3 +1280,26 @@ class ProductImageDetailAPIView(APIView):
         product_image.image.delete(save=False)
         product_image.delete()
         return Response({'status': 'success', 'message': 'Изображение удалено'})
+
+
+@extend_schema(
+    tags=['utilities'],
+    summary='Тест Sentry / GlitchTip',
+    description='Намеренно вызывает исключение для проверки интеграции с GlitchTip/Sentry. '
+                'Возвращает 500 при `DEBUG=True`, 403 при `DEBUG=False`.',
+    responses={
+        500: OpenApiResponse(description='Тестовое исключение (DEBUG=True)'),
+        403: OpenApiResponse(description='Доступно только в DEBUG режиме'),
+    }
+)
+class SentryTestView(APIView):
+    """Тестовый view для проверки интеграции с GlitchTip/Sentry."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, *args, **kwargs):
+        if not settings.DEBUG:
+            return Response(
+                {'status': 'error', 'message': 'Доступно только в DEBUG режиме'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        raise Exception('Тестовое исключение для проверки GlitchTip/Sentry')

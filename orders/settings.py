@@ -59,6 +59,8 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'backend',
     'imagekit',
+    'cachalot',
+    'silk',
     'baton.autodiscover',
 ]
 
@@ -72,6 +74,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'silk.middleware.SilkyMiddleware',
 ]
 
 REST_FRAMEWORK = {
@@ -96,9 +99,9 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle'
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '100/hour',      # Для анонимных пользователей
+        'anon': '10000/hour',      # Для анонимных пользователей
         'user': '1000/day',     # Для аутентифицированных
-        'register': '3/hour',   # Регистрация - 3 в час
+        'register': '30/hour',   # Регистрация - 3 в час
         'login': '10/minute',   # Логин - 10 в минуту
         'verify_email': '5/hour', # Подтверждение email - 5 в час
         'partner_update': '10/hour', # Загрузка прайса - 10 в час
@@ -207,10 +210,11 @@ MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
 # Email settings
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'noreply@localhost')
+
 if DEBUG:
-    # Режим разработки
+    # Режим разработки: письма выводятся в консоль
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-    print("Email отправка в консоль (режим разработки)")
 else:
     # Режим продакшена
     EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
@@ -219,7 +223,6 @@ else:
     EMAIL_USE_TLS = True
     EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER')
     EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD')
-    DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL')
 
 # Celery settings
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379')
@@ -238,6 +241,12 @@ CELERY_TASK_SOFT_TIME_LIMIT = 4 * 60
 
 # Хранение результатов (email не требует долгого хранения)
 CELERY_RESULT_EXPIRES = 1800  # 30 минут
+
+if DEBUG:
+    # Задачи выполняются синхронно в процессе Django — Celery-воркер не нужен,
+    # ConsoleEmailBackend выводит письма прямо в консоль сервера разработки
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = True
 
 # Настройки для продакшена
 if not DEBUG:
@@ -283,6 +292,11 @@ CACHES = {
         'LOCATION': os.getenv('REDIS_URL', 'redis://localhost:6379/1'),
     }
 }
+
+# Django-cachalot settings
+CACHALOT_ENABLED = True
+CACHALOT_TIMEOUT = 60 * 15  # 15 минут по умолчанию
+CACHALOT_CACHE = 'default'  # Использовать настроенный Redis cache
 
 AUTHENTICATION_BACKENDS = [
     'social_core.backends.google.GoogleOAuth2',

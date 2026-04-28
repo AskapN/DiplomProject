@@ -13,3 +13,5 @@ social-auth-app-django==5.8.0
 django-baton==5.1.2
 django-imagekit==6.1.0
 sentry-sdk[django]==2.58.0
+django-cachalot==2.9.0
+django-silk==5.5.0
