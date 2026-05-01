@@ -41,18 +41,16 @@ class UserRole(models.Model):
 
 
 class CustomUser(AbstractUser):
-    """Расширенная модель пользователя с дополнительными полями.
+    """Расширенная модель пользователя.
 
     Наследуется от AbstractUser и добавляет:
-    - phone: Телефон пользователя с валидацией формата
-    - avatar: Аватар пользователя (изображение)
-    - created_at: Дата создания аккаунта
-    - updated_at: Дата последнего обновления
-
-    Связи:
-    - OneToOne: shop (связь с магазином пользователя)
-    - ForeignKey: orders (заказы пользователя)
-    - ForeignKey: contacts (контактные данные пользователя)
+    - phone: Телефон с валидацией формата
+    - avatar / avatar_thumbnail / avatar_medium: Аватар и авто-миниатюры
+    - role: Роль пользователя (admin, shop, shop_employee, buyer)
+    - email_verified: Флаг подтверждения email
+    - email_verification_token: Одноразовый токен верификации
+    - email_verification_token_created_at: Время выдачи токена (TTL 24 ч)
+    - created_at / updated_at: Служебные временные метки
     """
     phone = models.CharField(
         max_length=20,
@@ -103,6 +101,9 @@ class CustomUser(AbstractUser):
     email_verified = models.BooleanField(default=False, verbose_name='Email подтвержден')
     email_verification_token = models.CharField(max_length=255, blank=True, null=True,
                                                 verbose_name='Токен верификации email')
+    email_verification_token_created_at = models.DateTimeField(
+        null=True, blank=True, verbose_name='Дата создания токена верификации'
+    )
 
     class Meta:
         verbose_name = 'Пользователь'
@@ -155,19 +156,28 @@ class CustomUser(AbstractUser):
         return False
 
     def generate_email_verification_token(self):
-        """Генерирует токен для верификации email"""
+        """Генерирует и сохраняет одноразовый токен верификации email с меткой времени."""
+        from django.utils import timezone
         self.email_verification_token = secrets.token_urlsafe(32)
-        self.save(update_fields=['email_verification_token'])
+        self.email_verification_token_created_at = timezone.now()
+        self.save(update_fields=['email_verification_token', 'email_verification_token_created_at'])
         return self.email_verification_token
 
     def verify_email(self, token):
-        """Подтверждает email по токену"""
-        if self.email_verification_token == token:
-            self.email_verified = True
-            self.email_verification_token = None
-            self.save(update_fields=['email_verified', 'email_verification_token'])
-            return True
-        return False
+        """Проверяет токен и подтверждает email. Возвращает False при неверном токене или истёкшем TTL (24 ч)."""
+        from django.utils import timezone
+        from datetime import timedelta
+        if self.email_verification_token != token:
+            return False
+        if not self.email_verification_token_created_at:
+            return False
+        if timezone.now() > self.email_verification_token_created_at + timedelta(hours=24):
+            return False
+        self.email_verified = True
+        self.email_verification_token = None
+        self.email_verification_token_created_at = None
+        self.save(update_fields=['email_verified', 'email_verification_token', 'email_verification_token_created_at'])
+        return True
 
 
 class Shop(models.Model):
@@ -460,7 +470,7 @@ class Contact(models.Model):
     user = models.ForeignKey(CustomUser, verbose_name='Пользователь', on_delete=models.CASCADE, related_name='contacts')
     last_name = models.CharField(max_length=40, verbose_name='Фамилия')
     first_name = models.CharField(max_length=40, verbose_name='Имя')
-    patronymic = models.CharField(max_length=40, verbose_name='Отчество')
+    patronymic = models.CharField(max_length=40, verbose_name='Отчество', blank=True)
     city = models.CharField(max_length=40, verbose_name='Город')
     street = models.CharField(max_length=40, verbose_name='Улица')
     house = models.CharField(max_length=40, verbose_name='Дом')
@@ -537,29 +547,26 @@ class Order(models.Model):
         return f'Заказ от {self.date} для {self.user.username}'
 
     def get_total_price(self):
-        """Возвращает общую сумму заказа"""
+        """Возвращает общую сумму заказа по ценам, зафиксированным в момент добавления в корзину."""
         total = Decimal('0.00')
         for item in self.order_items.all():
-            total += item.product.price * item.quantity
+            total += item.price * item.quantity
         return total
 
 
 class OrderItem(models.Model):
-    """Модель позиции заказа.
-
-    Представляет одну позицию в заказе - конкретный товар в определенном количестве.
+    """Позиция заказа: конкретный товар определённого магазина в заданном количестве.
 
     Поля:
-    - order: Ссылка на заказ (ForeignKey на Order)
-    - product: Ссылка на товар в магазине (ForeignKey на ProductInfo)
-    - shop: Ссылка на магазин (ForeignKey на Shop)
-    - quantity: Количество товара в позиции (положительное целое, минимум 1)
-
-    Связи:
-    - Нет прямых связей (промежуточная модель между Order и ProductInfo)
+    - order: Заказ (ForeignKey → Order)
+    - product: Товар в магазине (ForeignKey → ProductInfo)
+    - shop: Магазин (ForeignKey → Shop)
+    - quantity: Количество (≥ 1)
+    - price: Цена единицы, зафиксированная на момент добавления в корзину.
+      Не изменяется при последующем редактировании прайса магазина.
 
     Методы:
-    - get_price(): Возвращает стоимость позиции (цена товара × количество)
+    - get_price(): Возвращает стоимость позиции (price × quantity)
     """
     order = models.ForeignKey(Order, verbose_name='Заказ', on_delete=models.CASCADE, related_name='order_items')
     product = models.ForeignKey(
@@ -567,14 +574,17 @@ class OrderItem(models.Model):
     )
     shop = models.ForeignKey(Shop, verbose_name='магазин', on_delete=models.CASCADE, related_name='order_items')
     quantity = models.PositiveIntegerField(verbose_name='Количество', validators=[MinValueValidator(1)])
+    price = models.DecimalField(
+        max_digits=10, decimal_places=2, verbose_name='Цена на момент добавления'
+    )
 
     class Meta:
         verbose_name = 'Позиция в заказе'
         verbose_name_plural = 'Список позиций в заказе'
 
     def get_price(self):
-        """Возвращает стоимость позиции (цена × количество)"""
-        return self.product.price * self.quantity
+        """Возвращает стоимость позиции (зафиксированная цена × количество)"""
+        return self.price * self.quantity
 
 
 @receiver(post_save, sender=ProductImage)

@@ -310,6 +310,7 @@ class ImageKitTaskTest(TestCase):
             username='tasktest', email='tasktest@example.com', password='pass1234'
         )
 
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=False)
     @patch('backend.tasks.ImageCacheFile')
     def test_generate_all_thumbnails_for_user_calls_generate(self, mock_cache_cls):
         """generate_all_thumbnails_for_user вызывает ImageCacheFile.generate для каждого spec."""

@@ -172,7 +172,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
     """Сериализатор позиции заказа с расчётной суммой"""
     product_name = serializers.CharField(source='product.name', read_only=True)
     shop_name = serializers.CharField(source='shop.name', read_only=True)
-    price = serializers.DecimalField(source='product.price', read_only=True, max_digits=10, decimal_places=2)
+    price = serializers.DecimalField(read_only=True, max_digits=10, decimal_places=2)
     total = serializers.SerializerMethodField()
 
     class Meta:
@@ -180,8 +180,8 @@ class OrderItemSerializer(serializers.ModelSerializer):
         fields = ['id', 'product_name', 'shop_name', 'price', 'quantity', 'total']
 
     def get_total(self, obj):
-        """Расчёт суммы позиции (цена × количество)"""
-        return obj.product.price * obj.quantity
+        """Расчёт суммы позиции (зафиксированная цена × количество)"""
+        return obj.price * obj.quantity
 
 
 class OrderSerializer(serializers.ModelSerializer):

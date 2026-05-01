@@ -38,7 +38,7 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1']
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 
 # Application definition
@@ -99,9 +99,9 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle'
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '10000/hour',      # Для анонимных пользователей
+        'anon': '100/hour',      # Для анонимных пользователей
         'user': '1000/day',     # Для аутентифицированных
-        'register': '30/hour',   # Регистрация - 3 в час
+        'register': '3/hour',   # Регистрация - 3 в час
         'login': '10/minute',   # Логин - 10 в минуту
         'verify_email': '5/hour', # Подтверждение email - 5 в час
         'partner_update': '10/hour', # Загрузка прайса - 10 в час
@@ -300,7 +300,6 @@ CACHALOT_CACHE = 'default'  # Использовать настроенный Re
 
 AUTHENTICATION_BACKENDS = [
     'social_core.backends.google.GoogleOAuth2',
-    'social_core.backends.vk.VKOAuth2',
     'django.contrib.auth.backends.ModelBackend',
 ]
 
@@ -430,6 +429,6 @@ if SENTRY_DSN:
             RedisIntegration(),
         ],
         traces_sample_rate=1.0 if DEBUG else 0.2,
-        send_default_pii=True,
+        send_default_pii=False,
         environment='development' if DEBUG else 'production',
     )

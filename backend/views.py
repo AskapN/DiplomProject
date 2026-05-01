@@ -1,9 +1,9 @@
-from django.http import JsonResponse
 from django.core.validators import URLValidator
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.contrib.sites.shortcuts import get_current_site
 from django.shortcuts import redirect
+from django.urls import reverse
 from urllib.parse import urlencode
 from django.conf import settings
 
@@ -13,6 +13,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.views import APIView
 from rest_framework import status, generics
 from rest_framework.response import Response
+from rest_framework.pagination import PageNumberPagination
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiExample, OpenApiParameter
@@ -37,7 +38,7 @@ from backend.throttling import (
 
 
 @extend_schema(
-    tags=['partners'],
+    tags=['products'],
     summary='Обновление прайса от поставщика',
     description='Загружает товары из YAML или JSON файла по URL или из загруженного файла',
     request={
@@ -55,9 +56,11 @@ from backend.throttling import (
     }
 )
 class PartnerUpdate(APIView):
-    """
-    API класс для обновления прайса от поставщика.
-    Поддерживает загрузку товаров из URL и загруженных файлов.
+    """Импорт прайс-листа (YAML/JSON) по URL или через передачу файла.
+
+    Старые товары магазина удаляются перед загрузкой новых; операция атомарна.
+    Ответ содержит ключи: status, products, categories (shop, shop_employee).
+    Лимит тротлинга: 10 запросов/ч.
     """
 
     permission_classes = [IsAuthenticated, IsShopOrShopEmployee]
@@ -111,39 +114,39 @@ class PartnerUpdate(APIView):
                 error_message = f'Ошибка при загрузке файла: {str(e)}'
 
         else:
-            return JsonResponse({
-                'Status': False,
-                'Error': 'Укажите URL или загрузите файл'
-            })
+            return Response({
+                'status': 'error',
+                'message': 'Укажите URL или загрузите файл'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         # Обработка ошибок при парсинге
         if error_message:
-            return JsonResponse({
-                'Status': False,
-                'Error': error_message
-            })
+            return Response({
+                'status': 'error',
+                'message': error_message
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         if not data:
-            return JsonResponse({
-                'Status': False,
-                'Error': 'Не удалось распарсить файл'
-            })
+            return Response({
+                'status': 'error',
+                'message': 'Не удалось распарсить файл'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         # Загрузка товаров
         result = load_products_from_data(data, request.user)
 
         if result['status']:
-            return JsonResponse({
-                'Status': True,
-                'Shop': result['shop_id'],
-                'Products': result['products_loaded'],
-                'Categories': result['categories_loaded']
-            }, status=200)
+            return Response({
+                'status': 'success',
+                'shop': result['shop_id'],
+                'products': result['products_loaded'],
+                'categories': result['categories_loaded']
+            }, status=status.HTTP_200_OK)
         else:
-            return JsonResponse({
-                'Status': False,
-                'Error': result.get('error', 'Неизвестная ошибка')
-            })
+            return Response({
+                'status': 'error',
+                'message': result.get('error', 'Неизвестная ошибка')
+            }, status=status.HTTP_400_BAD_REQUEST)
 
 
 @extend_schema(
@@ -213,14 +216,14 @@ class LoginView(APIView):
 @extend_schema(
     tags=['auth'],
     summary='Редирект на OAuth-провайдера',
-    description='Перенаправляет браузер на страницу авторизации провайдера. '
-                'Поддерживаемые провайдеры: `google-oauth2`, `vk-oauth2`.',
+    description='Перенаправляет браузер на страницу авторизации Google. '
+                'Поддерживаемый провайдер: `google-oauth2`.',
     parameters=[
         OpenApiParameter(
             name='provider',
             type=str,
             location=OpenApiParameter.PATH,
-            description='Идентификатор провайдера (google-oauth2, vk-oauth2)',
+            description='Идентификатор провайдера (google-oauth2)',
             required=True,
         ),
     ],
@@ -233,7 +236,7 @@ class SocialAuthView(APIView):
     permission_classes = []
 
     def get(self, request, provider):
-        auth_url = f"/auth/login/{provider}/"
+        auth_url = reverse('social:begin', args=[provider])
         return redirect(auth_url)
 
 
@@ -248,25 +251,35 @@ class SocialAuthView(APIView):
     }
 )
 class SocialAuthTokenView(APIView):
-    """Возвращает JWT токены после завершения социальной авторизации"""
+    """Выдача JWT-токенов после OAuth.
+
+    Читает одноразовый код из сессии, извлекает JWT-пару из
+    Redis-кэша (описывает их social_pipeline) и удаляет запись.
+    Повторный вызов с тем же кодом вернёт 400 (TTL 5 мин).
+    """
     permission_classes = []
 
     def get(self, request):
-        access_token = request.session.pop('social_auth_access_token', None)
-        refresh_token = request.session.pop('social_auth_refresh_token', None)
+        from django.core.cache import cache
 
-        if not access_token:
+        code = request.session.pop('social_auth_code', None)
+        if not code:
             return Response({
                 'status': 'error',
                 'message': 'Токены не найдены. Выполните авторизацию через социальную сеть.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        tokens = cache.get(f'social_auth_tokens_{code}')
+        if not tokens:
+            return Response({
+                'status': 'error',
+                'message': 'Код авторизации истёк или уже использован. Выполните авторизацию заново.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        cache.delete(f'social_auth_tokens_{code}')
         return Response({
             'status': 'success',
-            'tokens': {
-                'access': access_token,
-                'refresh': refresh_token,
-            }
+            'tokens': tokens
         }, status=status.HTTP_200_OK)
 
 
@@ -557,11 +570,15 @@ class CartAPIView(APIView):
     }
 )
 class AddToCartAPIView(APIView):
-    """API для добавления товара в корзину"""
+    """Добавление товара в корзину с фиксацией цены.
+
+    Цена снапшотируется в момент добавления и не изменяется
+    даже если магазин позже обновит прайс-лист.
+    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        """Добавить товар в корзину"""
+        """Добавить товар в корзину, зафиксировав текущую цену."""
         product_info_id = request.data.get('product_info_id')
         try:
             quantity = int(request.data.get('quantity', 1))
@@ -605,7 +622,7 @@ class AddToCartAPIView(APIView):
             order=cart,
             product=product_info,
             shop=product_info.shop,
-            defaults={'quantity': quantity}
+            defaults={'quantity': quantity, 'price': product_info.price}
         )
 
         if not item_created:
@@ -990,11 +1007,18 @@ class ConfirmOrderAPIView(APIView):
     }
 )
 class OrderListAPIView(APIView):
-    """API для просмотра списка заказов текущего пользователя или магазина"""
+    """Список заказов с фильтрацией по роли и пагинацией.
+
+    Фильтрация по роли:
+    - buyer: только свои заказы
+    - shop: заказы с товарами из своего магазина
+    - shop_employee: заказы магазинов, в которых сотрудник активен
+    - admin: все заказы
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
-        """Получить список заказов в зависимости от роли пользователя"""
+        """Вернуть список заказов с учётом роли пользователя. Поддерживает ?page= для пагинации."""
         user = request.user
 
         # Если пользователь - покупатель, показываем только его заказы
@@ -1031,11 +1055,16 @@ class OrderListAPIView(APIView):
         else:
             orders = Order.objects.none()
 
+        paginator = PageNumberPagination()
+        page = paginator.paginate_queryset(orders, request)
+        if page is not None:
+            serializer = OrderSerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
         serializer = OrderSerializer(orders, many=True)
-        count = len(serializer.data)
         return Response({
             'status': 'success',
-            'count': count,
+            'count': len(serializer.data),
             'orders': serializer.data
         }, status=status.HTTP_200_OK)
 

@@ -112,28 +112,23 @@
           "name": "Социальная авторизация — редирект к провайдеру",
           "request": {
             "method": "GET",
-            "description": "Открыть в браузере. После OAuth провайдер редиректит обратно на сервер. Поддерживаемые провайдеры: google-oauth2, vk-oauth2.",
+            "description": "Открыть в браузере. Сервер редиректит на страницу входа Google. После OAuth провайдер возвращает браузер обратно. Единственный провайдер: google-oauth2.",
             "url": {
-              "raw": "{{base_url}}/auth/login/google-oauth2/",
+              "raw": "{{base_url}}/api/auth/social/google-oauth2/",
               "host": ["{{base_url}}"],
-              "path": ["auth", "login", "google-oauth2", ""]
+              "path": ["api", "auth", "social", "google-oauth2", ""]
             }
           }
         },
         {
-          "name": "Социальная авторизация — получить JWT (токен провайдера)",
+          "name": "Социальная авторизация — получить JWT (из сессии)",
           "request": {
-            "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
-            "description": "Обменивает access_token провайдера (Google / VK) на JWT токены приложения.",
+            "method": "GET",
+            "description": "Вызвать после завершения OAuth-флоу в браузере. Сервер читает одноразовый код из сессии, возвращает JWT токены из Redis-кэша (TTL 5 минут).",
             "url": {
               "raw": "{{base_url}}/api/auth/social/token/",
               "host": ["{{base_url}}"],
               "path": ["api", "auth", "social", "token", ""]
-            },
-            "body": {
-              "mode": "raw",
-              "raw": "{\n    \"provider\": \"google-oauth2\",\n    \"access_token\": \"<OAUTH_ACCESS_TOKEN_FROM_PROVIDER>\"\n}"
             }
           },
           "event": [
@@ -144,9 +139,10 @@
                   "pm.test('JWT получен через OAuth', function () {",
                   "    pm.response.to.have.status(200);",
                   "    var json = pm.response.json();",
-                  "    pm.collectionVariables.set('access_token', json.access);",
-                  "    pm.collectionVariables.set('refresh_token', json.refresh);",
-                  "    console.log('access_token сохранён:', json.access.substring(0, 30) + '...');",
+                  "    pm.expect(json.status).to.eql('success');",
+                  "    pm.collectionVariables.set('access_token', json.tokens.access);",
+                  "    pm.collectionVariables.set('refresh_token', json.tokens.refresh);",
+                  "    console.log('access_token сохранён:', json.tokens.access.substring(0, 30) + '...');",
                   "});"
                 ]
               }
@@ -154,15 +150,19 @@
           ]
         },
         {
-          "name": "Социальная авторизация — OAuth code (callback)",
+          "name": "Обновить access-токен",
           "request": {
-            "method": "GET",
-            "description": "Эндпоинт callback. Вызывается провайдером автоматически; вручную используется для отладки.",
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "description": "Обменивает refresh_token на новый access_token.",
             "url": {
-              "raw": "{{base_url}}/api/auth/social/google-oauth2/?code=<CODE>",
+              "raw": "{{base_url}}/api/token/refresh/",
               "host": ["{{base_url}}"],
-              "path": ["api", "auth", "social", "google-oauth2", ""],
-              "query": [{ "key": "code", "value": "<CODE>" }]
+              "path": ["api", "token", "refresh", ""]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"refresh\": \"{{refresh_token}}\"\n}"
             }
           },
           "event": [
@@ -170,14 +170,11 @@
               "listen": "test",
               "script": {
                 "exec": [
-                  "pm.test('Статус 200 или 400', function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 400]);",
+                  "pm.test('Токен обновлён', function () {",
+                  "    pm.response.to.have.status(200);",
                   "    var json = pm.response.json();",
-                  "    if (json.access) {",
-                  "        pm.collectionVariables.set('access_token', json.access);",
-                  "        pm.collectionVariables.set('refresh_token', json.refresh);",
-                  "        console.log('access_token сохранён из OAuth callback');",
-                  "    }",
+                  "    pm.collectionVariables.set('access_token', json.access);",
+                  "    console.log('access_token обновлён');",
                   "});"
                 ]
               }
@@ -586,9 +583,10 @@
                 "exec": [
                   "pm.test('Статус 200', function () { pm.response.to.have.status(200); });",
                   "var json = pm.response.json();",
-                  "if (json.orders && json.orders.length > 0) {",
-                  "    pm.collectionVariables.set('order_id', json.orders[0].id);",
-                  "    console.log('order_id сохранён:', json.orders[0].id);",
+                  "var orders = json.results || json.orders || [];",
+                  "if (orders.length > 0) {",
+                  "    pm.collectionVariables.set('order_id', orders[0].id);",
+                  "    console.log('order_id сохранён:', orders[0].id);",
                   "}"
                 ]
               }
@@ -659,9 +657,9 @@
                   "pm.test('Прайс загружен', function () {",
                   "    pm.response.to.have.status(200);",
                   "    var json = pm.response.json();",
-                  "    pm.expect(json.Status).to.be.true;",
-                  "    console.log('Загружено товаров:', json.Products);",
-                  "    console.log('Загружено категорий:', json.Categories);",
+                  "    pm.expect(json.status).to.eql('success');",
+                  "    console.log('Загружено товаров:', json.products);",
+                  "    console.log('Загружено категорий:', json.categories);",
                   "});"
                 ]
               }
